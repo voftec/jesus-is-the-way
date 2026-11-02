@@ -326,6 +326,29 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
+// Visible floor: not a pad — a soft darkening pool that grounds the machine and
+// lets the panorama's sparkle floor peek through near the feet before sinking
+// into darkness. No hard edge, no color plate.
+const floorMat = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  vertexShader: `varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = projectionMatrix*viewMatrix*modelMatrix*vec4(position,1.); }`,
+  fragmentShader: `varying vec2 vUv;
+    void main(){
+      float r = length(vUv - 0.5) * 2.0; // 0 center .. 1 edge
+      float a = (1.0 - smoothstep(0.26, 0.95, r)) * 0.86;
+      vec3 col = vec3(0.016, 0.012, 0.042);
+      gl_FragColor = vec4(col, a);
+      #include <colorspace_fragment>
+    }`,
+});
+const floor = new THREE.Mesh(new THREE.CircleGeometry(6, 64), floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.004;
+floor.renderOrder = -5;
+scene.add(floor);
+
 // Neon-ish floor glow ring for arcade flavor
 const glowMat = new THREE.MeshBasicMaterial({ color: 0x7a4dff, transparent: true, opacity: 0.55 });
 glowMat.color.multiplyScalar(1.7); // HDR so bloom catches it
