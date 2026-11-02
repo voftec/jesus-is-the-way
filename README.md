@@ -87,7 +87,7 @@ git add -A; git commit -m "Pages build"; git push -f origin gh-pages
   OpenBible cross-ref "substance" — identical indices across languages).
 - Full Bible bundled for EN (BSB) + ES (VBL) only; pt/de/it `KEEP READING`
   falls back to English (`FULL_BIBLE_LANGS` set).
-- `#enter-screen`: verse preview + lang chips + TAP TO ENTER, auto-detects
+- `#enter-screen`: welcome + "choose your language" (i18n) + lang chips + TAP TO ENTER, auto-detects
   `navigator.language`. Strings live in the `I18N` map in main.js.
 - Lang can switch pre-entry; pools load lazily per language.
 
