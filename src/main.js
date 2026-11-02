@@ -1100,8 +1100,11 @@ function startVerseReveal(pr) {
   target.y += 0.1;
   revealState = {
     t: 0, grp, sphere, mat, verse: v,
-    from: grp.position.clone(), target,
-    split: false, splitT: 0, opened: false, halves: null,
+    from: grp.position.clone(),
+    // storyboard: first a visible pop UP out of the hopper, then the flight
+    rise: grp.position.clone().add(new THREE.Vector3(0.15, 1.05, 0.35)),
+    target,
+    split: false, splitT: 0, opened: false, halves: null, crack: null,
   };
   setMusicMode('attract');
   triggerWinLight();
@@ -1238,25 +1241,34 @@ function updateVerseReveal(dt) {
   R.t += dt;
   const easeOut = (x) => 1 - Math.pow(1 - x, 3);
   if (!R.split) {
-    const k = Math.min(1, R.t / 0.95);
-    R.grp.position.lerpVectors(R.from, R.target, easeOut(k));
+    const k = Math.min(1, R.t / 1.15);
+    if (k < 0.38) {
+      // beat 3: a visible rise straight out of the PRIZE OUT hopper
+      R.grp.position.lerpVectors(R.from, R.rise, easeOut(k / 0.38));
+    } else {
+      // beat 4: travel up-right toward the camera
+      R.grp.position.lerpVectors(R.rise, R.target, easeOut((k - 0.38) / 0.62));
+    }
     R.sphere.rotation.y += dt * 4.2;
     R.sphere.rotation.x += dt * 1.7;
     R.grp.scale.setScalar(0.55 + 0.9 * easeOut(k));
     if (k >= 1) splitVerseBall(R);
   } else {
     const k = Math.min(1, (R.t - R.splitT) / 1.15);
-    const e = k * k;
     const [hA, hB] = R.halves;
-    hA.position.set(-e * 0.62, -e * 0.85, 0);
-    hB.position.set(e * 0.62, -e * 0.85, 0);
-    hA.rotation.z = e * 2.0;
-    hB.rotation.z = -e * 2.0;
-    // halves stay solid while visibly parting, then dissolve
-    R.mat.opacity = 1 - Math.min(1, Math.max(0, (k - 0.5) / 0.5) ** 2);
-    if (R.crack) R.crack.intensity = Math.sin(Math.min(1, k * 1.6) * Math.PI) * 7;
-    // the letter takes over only once the crack is readable
-    if (!R.opened && R.t - R.splitT > 0.62) {
+    // beat 6: clamshell — halves part left/right first, staying in frame
+    const part = Math.min(1, k / 0.45);
+    // beat 7: then they tumble down + roll away (storyboard arrows ↓↻)
+    const drop = Math.max(0, (k - 0.4) / 0.6);
+    hA.position.set(-part * part * 0.45, -drop * drop * 1.25, 0);
+    hB.position.set(part * part * 0.45, -drop * drop * 1.25, 0);
+    hA.rotation.z = part * 0.7 + drop * 2.2;
+    hB.rotation.z = -part * 0.7 - drop * 2.2;
+    R.mat.opacity = 1 - drop * drop;
+    if (R.crack) R.crack.intensity = Math.sin(Math.min(1, k * 1.4) * Math.PI) * 7;
+    // the letter was INSIDE: it opens while the gap is still visible and the
+    // halves are tumbling down around it
+    if (!R.opened && R.t - R.splitT > 0.42) {
       R.opened = true;
       openVerseCard(R.verse);
       sfx.paper();
