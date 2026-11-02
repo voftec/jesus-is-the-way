@@ -319,7 +319,7 @@ const __mark = (n) => window.__perf.push([n, Math.round(performance.now())]);
     de: ['Willkommen', 'WÄHLE DEINE SPRACHE', 'TIPPEN ZUM STARTEN'],
     it: ['Benvenuto', 'SCEGLI LA TUA LINGUA', 'TOCCA PER ENTRARE'],
   };
-  const l = ((navigator.language || 'en').slice(0, 2) || 'en').toLowerCase();
+  const l = 'en';
   const s = S[l] || S.en;
   document.getElementById('enter-verse').textContent = s[0];
   document.getElementById('enter-ref').textContent = s[1];

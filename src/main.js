@@ -1131,7 +1131,7 @@ const I18N = {
   it: { welcome: 'Benvenuto', pick: 'SCEGLI LA TUA LINGUA', enter: 'TOCCA PER ENTRARE', share: 'CONDIVIDI', read: 'CONTINUA A LEGGERE', back: 'TORNA ALLA MACCHINA', trans: 'RIVEDUTA 1927' },
 };
 const FULL_BIBLE_LANGS = new Set(['en', 'es']);
-let lang = window.__pendingLang || (navigator.language || 'en').slice(0, 2).toLowerCase();
+let lang = window.__pendingLang || 'en';
 if (!I18N[lang]) lang = 'en';
 let versesPromise = null;
 let entered = false;
