@@ -933,11 +933,11 @@ let bibleLines = null;         // lazy: full 31,102-verse text for KEEP READING
 
 // ---------- Languages: the flag comes before everything ----------
 const I18N = {
-  en: { enter: 'TAP TO ENTER', share: 'SHARE IT', read: 'KEEP READING', back: 'BACK TO THE MACHINE', trans: 'BSB' },
-  es: { enter: 'TOCA PARA ENTRAR', share: 'COMPÁRTELO', read: 'SEGUIR LEYENDO', back: 'VOLVER A LA MÁQUINA', trans: 'VBL' },
-  pt: { enter: 'TOQUE PARA ENTRAR', share: 'COMPARTILHAR', read: 'CONTINUAR LENDO', back: 'VOLTAR À MÁQUINA', trans: 'BLIVRE' },
-  de: { enter: 'TIPPEN ZUM STARTEN', share: 'TEILEN', read: 'WEITERLESEN', back: 'ZURÜCK ZUR MASCHINE', trans: 'LUTHER 1912' },
-  it: { enter: 'TOCCA PER ENTRARE', share: 'CONDIVIDI', read: 'CONTINUA A LEGGERE', back: 'TORNA ALLA MACCHINA', trans: 'RIVEDUTA 1927' },
+  en: { welcome: 'Welcome', pick: 'CHOOSE YOUR LANGUAGE', enter: 'TAP TO ENTER', share: 'SHARE IT', read: 'KEEP READING', back: 'BACK TO THE MACHINE', trans: 'BSB' },
+  es: { welcome: 'Bienvenido', pick: 'ELIGE TU IDIOMA', enter: 'TOCA PARA ENTRAR', share: 'COMPÁRTELO', read: 'SEGUIR LEYENDO', back: 'VOLVER A LA MÁQUINA', trans: 'VBL' },
+  pt: { welcome: 'Bem-vindo', pick: 'ESCOLHA SEU IDIOMA', enter: 'TOQUE PARA ENTRAR', share: 'COMPARTILHAR', read: 'CONTINUAR LENDO', back: 'VOLTAR À MÁQUINA', trans: 'BLIVRE' },
+  de: { welcome: 'Willkommen', pick: 'WÄHLE DEINE SPRACHE', enter: 'TIPPEN ZUM STARTEN', share: 'TEILEN', read: 'WEITERLESEN', back: 'ZURÜCK ZUR MASCHINE', trans: 'LUTHER 1912' },
+  it: { welcome: 'Benvenuto', pick: 'SCEGLI LA TUA LINGUA', enter: 'TOCCA PER ENTRARE', share: 'CONDIVIDI', read: 'CONTINUA A LEGGERE', back: 'TORNA ALLA MACCHINA', trans: 'RIVEDUTA 1927' },
 };
 const FULL_BIBLE_LANGS = new Set(['en', 'es']);
 let lang = (navigator.language || 'en').slice(0, 2).toLowerCase();
@@ -954,6 +954,8 @@ const enterUI = {
 
 function applyStrings() {
   const s = I18N[lang];
+  enterUI.verse.textContent = s.welcome;
+  enterUI.ref.textContent = s.pick;
   enterUI.btn.textContent = s.enter;
   verseUI.share.textContent = s.share;
   verseUI.read.textContent = s.read;
@@ -963,13 +965,6 @@ function applyStrings() {
   });
 }
 
-function previewEnterVerse() {
-  if (entered || !versePool) return;
-  const v = versePool[(Math.random() * versePool.length) | 0];
-  enterUI.verse.textContent = `“${v.t}”`;
-  enterUI.ref.textContent = v.r.toUpperCase();
-}
-
 function loadLangPool(l) {
   lang = l;
   applyStrings();
@@ -977,7 +972,6 @@ function loadLangPool(l) {
   versesPromise.then((d) => {
     if (!d?.verses?.length || l !== lang) return;
     versePool = d.verses;
-    previewEnterVerse();
     // A verse also waits on the loading screen — the Word before the game
     const lv = document.getElementById('load-verse');
     const v0 = versePool[(Math.random() * versePool.length) | 0];
