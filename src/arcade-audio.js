@@ -4,6 +4,7 @@
 
 let ctx = null;
 let master = null;
+let sfxBus = null;
 let ambientOn = false;
 
 function ensureCtx() {
@@ -14,6 +15,9 @@ function ensureCtx() {
     master = ctx.createGain();
     master.gain.value = 0.45;
     master.connect(ctx.destination);
+    sfxBus = ctx.createGain();
+    sfxBus.gain.value = 0.95; // SFX sit ~5% under before
+    sfxBus.connect(master);
   }
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
@@ -27,7 +31,12 @@ export function prewarmAudio() { ensureCtx(); }
 export function duckAudio(on) {
   const c = ensureCtx();
   if (!c || !master) return;
-  master.gain.setTargetAtTime(on ? 0 : 1, c.currentTime, 0.35);
+  master.gain.setTargetAtTime(on ? 0 : 0.45, c.currentTime, 0.35);
+}
+
+// Debug probe for audio lifecycle issues
+export function audioState() {
+  return { state: ctx?.state, master: master?.gain.value, musicTimer: !!musicTimer, ambientOn };
 }
 
 // Call from the first user gesture (Snap requires audio to unlock post-gesture).
@@ -70,13 +79,13 @@ function noiseBurst(dur, type = 'lowpass', freq = 800, gain = 0.2, delay = 0) {
   const t = c.currentTime + delay;
   g.gain.setValueAtTime(gain, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  s.connect(f); f.connect(g); g.connect(master);
+  s.connect(f); f.connect(g); g.connect(sfxBus || master);
   s.start(t); s.stop(t + dur);
 }
 
 function tone(freq0, freq1, dur, type = 'sine', gain = 0.2, delay = 0, lpFreq = 0) {
   const c = ensureCtx(); if (!c) return;
-  _toneAt(freq0, freq1, dur, type, gain, c.currentTime + delay, lpFreq, master);
+  _toneAt(freq0, freq1, dur, type, gain, c.currentTime + delay, lpFreq, sfxBus || master);
 }
 
 function _toneAt(freq0, freq1, dur, type, gain, t, lpFreq, dest) {
