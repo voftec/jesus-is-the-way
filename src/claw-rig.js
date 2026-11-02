@@ -477,9 +477,9 @@ export class ClawRig {
     bottomPlate.position.set(cx, floorY - wellDepth, cz);
     g.add(bottomPlate);
 
-    // 2. Brushed stainless-steel perimeter rim flush with the pit floor around the chute opening
-    const rimH = 0.032, rimW = 0.065;
-    const rimY = floorY + rimH * 0.35;
+    // 2. Brushed stainless-steel perimeter rim recessed slightly below the side window sill
+    const rimH = 0.026, rimW = 0.055;
+    const rimY = floorY - 0.04;
     const rimFront = new THREE.Mesh(new THREE.BoxGeometry(w + rimW, rimH, rimW), chromeMat);
     rimFront.position.set(cx, rimY, zMax - rimW * 0.3);
     g.add(rimFront);
@@ -493,16 +493,16 @@ export class ClawRig {
     rimRight.position.set(xMax - rimW * 0.3, rimY, cz);
     g.add(rimRight);
 
-    // 3. Main inclined stainless-steel slide: starts high at the back wall (zMin, y = -0.88)
-    //    and slopes forward (+Z) and down (-Y) toward the front throat leading to PRIZE OUT.
+    // 3. Main inclined stainless-steel slide: recessed well below the floor & side-window sill
+    //    (yStart = floorY - 0.18) and sloping downward (-Y) and forward (+Z) toward PRIZE OUT.
     const zStart = zMin + 0.03;       // -0.12
-    const yStart = floorY + 0.28;     // -0.92 (rises up against back of chute box)
-    const zKnee = 0.96;               // front throat drop-off
-    const yKnee = floorY - 0.34;      // -1.54
-    const dz1 = zKnee - zStart;       // 1.08
+    const yStart = floorY - 0.18;     // -1.38 (completely below the side window frame)
+    const zKnee = 0.98;               // front throat drop-off
+    const yKnee = floorY - 0.80;      // -2.00 (deep inside the well)
+    const dz1 = zKnee - zStart;       // 1.10
     const dy1 = yKnee - yStart;       // -0.62
     const len1 = Math.hypot(dz1, dy1);
-    const pitch1 = Math.atan2(-dy1, dz1); // ~30° downward slope toward +Z (PRIZE OUT door)
+    const pitch1 = Math.atan2(-dy1, dz1); // ~29.4° downward slope inside the well toward +Z
 
     const mainSlide = new THREE.Mesh(new THREE.BoxGeometry(w - 0.08, 0.028, len1), steelMat);
     mainSlide.position.set(cx, (yStart + yKnee) * 0.5, (zStart + zKnee) * 0.5);
@@ -510,16 +510,16 @@ export class ClawRig {
     mainSlide.receiveShadow = true;
     g.add(mainSlide);
 
-    // Back vertical stainless riser sealing between yStart and the back rim
-    const backRiserH = yStart - floorY + 0.08;
-    const backRiser = new THREE.Mesh(new THREE.BoxGeometry(w - 0.08, backRiserH, 0.028), steelMat);
-    backRiser.position.set(cx, floorY + backRiserH * 0.5 - 0.03, zStart - 0.01);
-    g.add(backRiser);
+    // Back vertical stainless liner sealing between the floor cutout edge and yStart
+    const backLinerH = (floorY - yStart) + 0.04;
+    const backLiner = new THREE.Mesh(new THREE.BoxGeometry(w - 0.06, backLinerH, 0.026), darkHousingMat);
+    backLiner.position.set(cx, (floorY + yStart) * 0.5, zStart - 0.01);
+    g.add(backLiner);
 
-    // 4. Deep dark throat tunnel at the front of the ramp (z = 0.96..1.40) plunging straight down
+    // 4. Deep dark throat tunnel at the front of the ramp (z = 0.98..1.38) plunging straight down
     //    into the lower-left PRIZE OUT door so you see the ramp feeding into the door's shaft
     const zEnd = zMax - 0.05;         // 1.38
-    const yEnd = floorY - 1.15;       // -2.35
+    const yEnd = floorY - 1.32;       // -2.52
     const dz2 = zEnd - zKnee;
     const dy2 = yEnd - yKnee;
     const len2 = Math.hypot(dz2, dy2);
@@ -537,15 +537,15 @@ export class ClawRig {
     kneeLip.position.set(cx, yKnee + 0.008, zKnee);
     g.add(kneeLip);
 
-    // 5. Angled side funnel cheeks (bent sheet-metal wings) that channel balls toward the center trough
-    const cheekW = 0.30;
-    const cheekRoll = 0.50; // ~29° inward bank
+    // 5. Angled side funnel cheeks recessed deep inside the well (never visible above the window sill)
+    const cheekW = 0.26;
+    const cheekRoll = 0.42;
     [-1, 1].forEach((side) => {
-      const cheek = new THREE.Mesh(new THREE.BoxGeometry(cheekW, 0.022, len1 * 0.98), steelMat);
+      const cheek = new THREE.Mesh(new THREE.BoxGeometry(cheekW, 0.022, len1 * 0.94), steelMat);
       cheek.position.set(
-        cx + side * (w * 0.5 - cheekW * 0.42),
-        (yStart + yKnee) * 0.5 + 0.072,
-        (zStart + zKnee) * 0.5
+        cx + side * (w * 0.5 - cheekW * 0.44),
+        (yStart + yKnee) * 0.5 + 0.028,
+        (zStart + zKnee) * 0.5 + 0.02
       );
       cheek.rotation.order = 'XZY';
       cheek.rotation.x = pitch1;
@@ -554,7 +554,7 @@ export class ClawRig {
       g.add(cheek);
     });
 
-    // 6. Longitudinal polished chrome guide rails along the ramp pointing toward the front door
+    // 6. Longitudinal polished chrome guide rails along the recessed ramp pointing toward PRIZE OUT
     const railGeo = new THREE.CylinderGeometry(0.015, 0.015, len1 * 0.94, 12);
     railGeo.rotateX(Math.PI * 0.5);
     [-0.28, -0.09, 0.09, 0.28].forEach((rx) => {
@@ -569,8 +569,8 @@ export class ClawRig {
     });
 
     // 7. Narrow front stainless apron sealing the gap between the front floor edge and zMax of vidrio_buzon
-    const frontApron = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 0.026, 0.28), steelMat);
-    frontApron.position.set(cx, floorY + 0.002, zMax + 0.12);
+    const frontApron = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 0.026, 0.28), darkHousingMat);
+    frontApron.position.set(cx, floorY - 0.04, zMax + 0.12);
     g.add(frontApron);
   }
 
@@ -1166,9 +1166,9 @@ export class ClawRig {
         const inChuteFootprint = b.pos.x > bx0.xMin && b.pos.x < bx0.xMax && b.pos.z > bx0.zMin && b.pos.z < bx0.zMax;
         if (pr.droppingInChute || inChuteFootprint) {
           pr.droppingInChute = true;
-          // Ramp surface height: slopes from y = -0.92 at z = -0.12 down to y = -1.54 at z = 0.96, then plunges
-          const rampT = Math.max(0, Math.min(1, (b.pos.z - (-0.12)) / 1.08));
-          const rampY = b.pos.z < 0.96 ? (-0.92 - rampT * 0.62) : (-1.54 - (b.pos.z - 0.96) * 2.4);
+          // Ramp surface height: slopes from y = -1.38 at z = -0.12 down to y = -2.00 at z = 0.98
+          const rampT = Math.max(0, Math.min(1, (b.pos.z - (-0.12)) / 1.10));
+          const rampY = b.pos.z < 0.98 ? (-1.38 - rampT * 0.62) : (-2.00 - (b.pos.z - 0.98) * 2.4);
           if (minSphereY < rampY) {
             b.pos.y += rampY - minSphereY;
             if (b.vel.y < 0) b.vel.y = -b.vel.y * 0.25;
