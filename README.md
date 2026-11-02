@@ -14,6 +14,7 @@ moment of reward. The audience is people who would never open a Bible.
 
 - Game: <https://voftec.github.io/jesus-is-the-way/>
 - Instant reveal preview: `https://voftec.github.io/jesus-is-the-way/?reveal=carta`
+- No post-processing (comparison only): `https://voftec.github.io/jesus-is-the-way/?nofx`
 - Local dev preview: serve `dist/` statically (e.g. `npx serve dist`), open the URL.
 
 ## Constraints (hard)
@@ -62,6 +63,45 @@ git init -b gh-pages; git remote add origin <repo-url>
 git add -A; git commit -m "Pages build"; git push -f origin gh-pages
 ```
 
+Bump the `bundle.js?v=N` cache-buster in `src/index.html` on every deploy —
+iPhone Safari otherwise keeps the old bundle.
+
+## Performance (keep these when editing)
+
+Rule: optimizations only ship if a deterministic frame is pixel-identical to the
+previous build (same clock + seeded `Math.random`, compared with pixelmatch).
+
+| | GL draws/frame | frame ms (4× CPU throttle, 390×844 @2x) |
+|---|---|---|
+| before | 1841 (`?nofx` 1111) | ~36 |
+| now | 745 (`?nofx` 546) | ~25 |
+
+Pixel diff vs. before: 63 px of 1.3 M (claw edges), `?nofx` 4 px.
+
+- **Lighter cabinet GLB**: `cabinet.min.glb` simplified with gltf-transform +
+  meshopt (673k → 253k tris, 4.9 → 2.5 MB, tiny normal/MR maps dropped). Only
+  visible loss: a bit less relief on the CLAW letters. Original is in git
+  history (before commit `4386541`). It is `<link rel=preload>`ed in `index.html`.
+- **Load doesn't wait on verses**: the machine builds as soon as the GLB
+  arrives; `verses-<lang>.json` fills the deck when it lands (stale-language
+  responses are ignored).
+- **Instanced ball pit** (`claw-rig.js`): each ball keeps an invisible `Mesh`
+  for physics/prize logic; one `InstancedMesh` per material draws them.
+  `claw.syncBallInstances()` copies transforms every frame — call it after
+  any code that moves balls, or they freeze visually.
+- **Merged plush parts**: `mergeByMaterial()` bakes each plush's parts into one
+  mesh per material (9 → 3-4 meshes). Add new plush parts *before* that call.
+- **One shadow pass per frame**: `shadowMap.autoUpdate = false`, and the loop
+  sets `needsUpdate = true` right before the beauty pass (the bloom mask pass
+  reuses it instead of re-rendering shadows).
+- **No canvas MSAA with post-FX**: the composer target already has 4× MSAA;
+  `antialias` is only on for `?nofx`.
+- **`updateDemo(dt)` ignores `dt <= 0`**: physics divides by `dt`; two frames
+  with the same timestamp used to NaN every prize.
+- Tried and dropped: `renderer.compileAsync` before hiding the loader (no gain).
+- Not done because they'd change the look: bloom pass with bloom objects only
+  (claw would stop occluding neon glow), lower pixel ratio on phones.
+
 ## How the reveal works (read this first)
 
 1. **Deck**: `ClawRig.setVerseDeck(shuffledDeck(n))` assigns every spawned prize a
@@ -103,6 +143,7 @@ text/buttons — needs layout work if ever promoted.
 ## Dev hooks
 
 - `?reveal=X` — preview variant + auto-run sequence
+- `?nofx` — render without bloom/composer (perf comparison)
 - `?dev` — FX/skybox panel (hidden otherwise)
 - `?hq` / `?low` — load alt GLB (files moved to `assets-src/unused-variants/`, will 404 — dev-only)
 - `window.__verse.test(i)` — queue a reveal with pool index `i` (8 = Jer 29:11)
