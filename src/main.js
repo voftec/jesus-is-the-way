@@ -1089,8 +1089,10 @@ function startVerseReveal(pr) {
   const grp = new THREE.Group();
   const sphere = new THREE.Mesh(new THREE.SphereGeometry(r, 26, 20), mat);
   grp.add(sphere);
-  pr.mesh.getWorldPosition(_vTmp);
-  grp.position.copy(_vTmp);
+  // Spawn at the PRIZE OUT hopper (world X -0.35..-0.08, Z -0.08..+0.27 per
+  // claw-rig.js), not wherever the respawned prize sits in the pile.
+  grp.position.set(-0.215, 0.46, 0.10);
+  grp.scale.setScalar(0.55);
   scene.add(grp);
   // target: center of the screen, floating between camera and cabinet
   const dir = controls.target.clone().sub(camera.position).normalize();
@@ -1118,6 +1120,10 @@ function splitVerseBall(R) {
   hB.rotation.y = -Math.PI / 2;  // dome faces +X
   R.grp.add(hA, hB);
   R.halves = [hA, hB];
+  // warm light escaping through the crack as it opens
+  const crack = new THREE.PointLight(0xffd68a, 0, 2.2, 1.6);
+  R.grp.add(crack);
+  R.crack = crack;
   sfx.chime();
 }
 
@@ -1236,18 +1242,21 @@ function updateVerseReveal(dt) {
     R.grp.position.lerpVectors(R.from, R.target, easeOut(k));
     R.sphere.rotation.y += dt * 4.2;
     R.sphere.rotation.x += dt * 1.7;
-    R.grp.scale.setScalar(1 + 0.45 * easeOut(k));
+    R.grp.scale.setScalar(0.55 + 0.9 * easeOut(k));
     if (k >= 1) splitVerseBall(R);
   } else {
-    const k = Math.min(1, (R.t - R.splitT) / 0.8);
+    const k = Math.min(1, (R.t - R.splitT) / 1.15);
     const e = k * k;
     const [hA, hB] = R.halves;
-    hA.position.set(-e * 0.42, -e * e * 1.35, 0);
-    hB.position.set(e * 0.42, -e * e * 1.35, 0);
+    hA.position.set(-e * 0.62, -e * 0.85, 0);
+    hB.position.set(e * 0.62, -e * 0.85, 0);
     hA.rotation.z = e * 2.0;
     hB.rotation.z = -e * 2.0;
-    R.mat.opacity = 1 - k * k;
-    if (!R.opened && R.t - R.splitT > 0.16) {
+    // halves stay solid while visibly parting, then dissolve
+    R.mat.opacity = 1 - Math.min(1, Math.max(0, (k - 0.5) / 0.5) ** 2);
+    if (R.crack) R.crack.intensity = Math.sin(Math.min(1, k * 1.6) * Math.PI) * 7;
+    // the letter takes over only once the crack is readable
+    if (!R.opened && R.t - R.splitT > 0.62) {
       R.opened = true;
       openVerseCard(R.verse);
       sfx.paper();
@@ -1554,6 +1563,8 @@ renderer.setAnimationLoop(() => {
     renderer.shadowMap.needsUpdate = true;
     finalComposer.render();
   }
+  // debug: per-frame capture hook — called after the composited frame is ready
+  if (window.__frameHook) window.__frameHook(renderer.domElement);
   // fps watchdog → adaptive quality tier
   fpsTimer += dt; fpsAcc += dt; fpsN++;
   if (fpsTimer > 2.5 && fpsN > 30) {
