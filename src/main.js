@@ -984,6 +984,61 @@ const verseUI = {
 let versePool = null;          // [{ i, r, t }] ranked-by-substance pool
 let revealState = null;        // active ball→paper sequence
 const revealQueue = [];        // wins queue up; they reveal one at a time
+let giftHalvesProto = null;    // { leftGeo, rightGeo } loaded from sphereLeft.glb + sphereRight.glb
+
+// Split a solidified hemisphere BufferGeometry into two material groups:
+// group 0 = outer shell + rim (rAvg >= 0.955), group 1 = concave inner wall (rAvg < 0.955),
+// and smooth normals across curved faces while keeping the ~90deg lip edge crisp.
+function splitShellGroups(srcGeo) {
+  const geo = srcGeo.index ? srcGeo.clone() : srcGeo;
+  const pos = geo.attributes.position;
+  const nrm = geo.attributes.normal;
+  // Crease-aware normal smoothing: average normals of coincident vertices whose face
+  // normals agree within ~50deg (cos > 0.64), so the spherical dome and concave bowl
+  // become silky smooth while the flat lip rim stays sharp.
+  if (nrm) {
+    const buckets = new Map();
+    for (let i = 0; i < pos.count; i++) {
+      const k = `${Math.round(pos.getX(i) * 2000)},${Math.round(pos.getY(i) * 2000)},${Math.round(pos.getZ(i) * 2000)}`;
+      let b = buckets.get(k);
+      if (!b) { b = []; buckets.set(k, b); }
+      b.push(i);
+    }
+    const out = new Float32Array(nrm.array.length);
+    for (const b of buckets.values()) {
+      for (const i of b) {
+        const nx = nrm.getX(i), ny = nrm.getY(i), nz = nrm.getZ(i);
+        let sx = 0, sy = 0, sz = 0;
+        for (const j of b) {
+          const jx = nrm.getX(j), jy = nrm.getY(j), jz = nrm.getZ(j);
+          if (nx * jx + ny * jy + nz * jz > 0.64) { sx += jx; sy += jy; sz += jz; }
+        }
+        const len = Math.hypot(sx, sy, sz) || 1;
+        out[i * 3] = sx / len; out[i * 3 + 1] = sy / len; out[i * 3 + 2] = sz / len;
+      }
+    }
+    geo.setAttribute('normal', new THREE.BufferAttribute(out, 3));
+  }
+  const idx = geo.index.array;
+  const outerTris = [];
+  const innerTris = [];
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i], b = idx[i + 1], c = idx[i + 2];
+    const ra = Math.hypot(pos.getX(a), pos.getY(a), pos.getZ(a));
+    const rb = Math.hypot(pos.getX(b), pos.getY(b), pos.getZ(b));
+    const rc = Math.hypot(pos.getX(c), pos.getY(c), pos.getZ(c));
+    if ((ra + rb + rc) / 3 < 0.955) innerTris.push(a, b, c);
+    else outerTris.push(a, b, c);
+  }
+  const reordered = new (idx.constructor)(outerTris.length + innerTris.length);
+  reordered.set(outerTris, 0);
+  reordered.set(innerTris, outerTris.length);
+  geo.setIndex(new THREE.BufferAttribute(reordered, 1));
+  geo.clearGroups();
+  geo.addGroup(0, outerTris.length, 0);
+  geo.addGroup(outerTris.length, innerTris.length, 1);
+  return geo;
+}
 let bibleLines = null;         // lazy: full 31,102-verse text for KEEP READING
 
 // ---------- Languages: the flag comes before everything ----------
@@ -1074,6 +1129,15 @@ function shuffledDeck(n) {
 
 function startVerseReveal(pr) {
   if (!versePool) { triggerWinLight(); return; }
+  // Freeze the claw in the background as soon as the prize reveal starts
+  if (claw) {
+    claw.autoDemo = false;
+    claw.phase = 'idle';
+    claw.phaseTimer = 0;
+    claw.targetTX = claw.anim.smoothTX;
+    claw.targetTZ = claw.anim.smoothTZ;
+    claw.targetDrop = 0.48;
+  }
   const v = pr.verseIdx >= 0 ? versePool[pr.verseIdx] : null;
   // sample the caught prize's color for the capsule it becomes
   let hex = 0xfbbf24;
@@ -1084,16 +1148,42 @@ function startVerseReveal(pr) {
   });
   const r = 0.16;
   const mat = new THREE.MeshStandardMaterial({
-    color: hex, roughness: 0.22, metalness: 0.12, side: THREE.FrontSide, transparent: true,
+    color: hex, roughness: 0.22, metalness: 0.12, side: THREE.DoubleSide, transparent: true,
+  });
+  // Inner concave wall material: subtle warm gold while closed, ignites when cracked open
+  const innerMat = new THREE.MeshStandardMaterial({
+    color: 0xffe4a3, emissive: 0xffb347, emissiveIntensity: 0.08,
+    roughness: 0.32, metalness: 0.05, side: THREE.DoubleSide, transparent: true,
   });
   const grp = new THREE.Group();
-  const sphere = new THREE.Mesh(new THREE.SphereGeometry(r, 26, 20), mat);
-  // Vertical seam ring (storyboard panel 5: line down the middle before it splits)
-  const seamMat = new THREE.MeshBasicMaterial({ color: 0x1a0f0a, transparent: true, opacity: 0.85 });
-  const seam = new THREE.Mesh(new THREE.TorusGeometry(r * 1.003, r * 0.018, 8, 40), seamMat);
-  seam.rotation.y = Math.PI / 2; // ring in YZ plane -> vertical line from camera
-  sphere.add(seam);
-  grp.add(sphere);
+  const ballRig = new THREE.Group(); // rotated as one ball before split
+  grp.add(ballRig);
+
+  // Build the two solidified concave halves directly from Diego's Blender gift sphere
+  // (sphereLeft.glb / sphereRight.glb). In raw mesh space the dome is at +Z (z in 0.005..1)
+  // and the hollow mouth is at z=0 facing -Z. Rotating the mesh by -PI/2 around Y puts the
+  // left dome at -X with its concave mouth facing +X (center); +PI/2 puts the right dome at
+  // +X with its concave mouth facing -X (center). Together at rest they form the closed ball
+  // with the real beveled seam down the middle — no mesh swap on split!
+  const fallbackGeo = new THREE.SphereGeometry(1, 28, 16, 0, Math.PI, 0, Math.PI);
+  const leftGeo = giftHalvesProto ? giftHalvesProto.leftGeo : fallbackGeo;
+  const rightGeo = giftHalvesProto ? giftHalvesProto.rightGeo : fallbackGeo;
+  const mats = giftHalvesProto ? [mat, innerMat] : mat;
+
+  const hA = new THREE.Group(); // left half pivot
+  const meshA = new THREE.Mesh(leftGeo, mats);
+  meshA.scale.setScalar(r);
+  meshA.rotation.y = -Math.PI / 2;
+  hA.add(meshA);
+
+  const hB = new THREE.Group(); // right half pivot
+  const meshB = new THREE.Mesh(rightGeo, mats);
+  meshB.scale.setScalar(r);
+  meshB.rotation.y = Math.PI / 2;
+  hB.add(meshB);
+
+  ballRig.add(hA, hB);
+
   // Spawn at the actual PRIZE OUT door on the lower-left front panel (tripo_part_33),
   // pulled slightly forward in Z so the ball sits visibly in the doorway.
   const door = machine && (machine.getObjectByName('tripo_part_33') || machine.getObjectByName('tripo_part_20'));
@@ -1111,12 +1201,13 @@ function startVerseReveal(pr) {
   const target = camera.position.clone().add(dir.multiplyScalar(camera.position.distanceTo(controls.target) * 0.52));
   target.y += 0.1;
   revealState = {
-    t: 0, grp, sphere, mat, seamMat, verse: v,
+    t: 0, grp, ballRig, mat, innerMat, verse: v, r,
     from: grp.position.clone(),
     // storyboard: pop UP out of the doorway first, then travel to center
     rise: grp.position.clone().add(new THREE.Vector3(0.04, 0.28, 0.12)),
     target,
-    split: false, splitT: 0, opened: false, halves: null, crack: null, extraDisposables: [seam.geometry, seamMat],
+    split: false, splitT: 0, opened: false, halves: [hA, hB], crack: null,
+    extraDisposables: giftHalvesProto ? [innerMat] : [fallbackGeo, innerMat],
   };
   setMusicMode('attract');
   triggerWinLight();
@@ -1126,42 +1217,20 @@ function startVerseReveal(pr) {
 function splitVerseBall(R) {
   R.split = true;
   R.splitT = R.t;
-  R.sphere.visible = false;
-  const r = R.sphere.geometry.parameters.radius;
-  // Concave capsule cup: outer shell (FrontSide) + warm golden glowing hollow interior
-  // (BackSide — the Word inside literally radiates light into the dark arcade) + lip rim.
-  const outerGeo = new THREE.SphereGeometry(r, 28, 16, 0, Math.PI, 0, Math.PI);
-  const innerGeo = new THREE.SphereGeometry(r * 0.93, 24, 14, 0, Math.PI, 0, Math.PI);
-  const rimGeo = new THREE.TorusGeometry(r * 0.965, r * 0.038, 10, 36);
-  const innerMat = new THREE.MeshStandardMaterial({
-    color: 0xffe4a3, emissive: 0xffb347, emissiveIntensity: 0.55,
-    roughness: 0.35, side: THREE.BackSide, transparent: true,
-  });
-  const rimMat = new THREE.MeshStandardMaterial({
-    color: 0xfef3c7, roughness: 0.3, metalness: 0.1, transparent: true,
-  });
-  R.innerMat = innerMat;
-  R.rimMat = rimMat;
-  R.extraDisposables.push(outerGeo, innerGeo, rimGeo, innerMat, rimMat);
-  const makeCup = (sign) => {
-    const cup = new THREE.Group();
-    const outer = new THREE.Mesh(outerGeo, R.mat);
-    const inner = new THREE.Mesh(innerGeo, innerMat);
-    const rim = new THREE.Mesh(rimGeo, rimMat);
-    outer.rotation.y = sign * (Math.PI / 2);
-    inner.rotation.y = sign * (Math.PI / 2);
-    rim.rotation.y = Math.PI / 2;
-    cup.add(outer, inner, rim);
-    return cup;
-  };
-  const hA = makeCup(-1);
-  const hB = makeCup(1);
-  R.grp.add(hA, hB);
-  R.halves = [hA, hB];
-  // warm light escaping through the crack as it opens — the Word brings light into darkness
+  R.ballRig.rotation.set(0, 0, 0);
+  // Warm light core inside the capsule — the Word brings light into darkness
   const crack = new THREE.PointLight(0xffd68a, 0, 2.2, 1.6);
-  R.grp.add(crack);
+  const coreGeo = new THREE.SphereGeometry(R.r * 0.52, 20, 16);
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xfff3c4, emissive: 0xffb347, emissiveIntensity: 0.85,
+    roughness: 0.2, transparent: true, opacity: 0.95,
+  });
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+  R.grp.add(crack, coreMesh);
   R.crack = crack;
+  R.coreMesh = coreMesh;
+  R.coreMat = coreMat;
+  R.extraDisposables.push(coreGeo, coreMat);
   sfx.chime();
 }
 
@@ -1182,7 +1251,6 @@ function closeVerseCard() {
     verseUI.wrap.classList.remove('on');
     if (revealState) {
       scene.remove(revealState.grp);
-      revealState.sphere.geometry.dispose();
       if (revealState.extraDisposables) revealState.extraDisposables.forEach((d) => d.dispose && d.dispose());
       revealState.mat.dispose();
       revealState = null;
@@ -1279,13 +1347,13 @@ function updateVerseReveal(dt) {
     // Timeline before split:
     //   0.00..1.50s — panels 1-2: visible inside the lower-left PRIZE OUT doorway
     //   1.50..2.45s — panels 3-4: rises out of the doorway and flies to center
-    //   2.45..3.45s — panel 5:    waits 1.0s in front with vertical seam facing camera
+    //   2.45..3.45s — panel 5:    waits 1.0s in front with the real Blender seam facing camera
     if (R.t < 1.5) {
       const w = R.t / 1.5;
       R.grp.position.copy(R.from);
       R.grp.position.y += Math.sin(w * Math.PI * 2) * 0.012;
       R.grp.scale.setScalar(0.5 + 0.08 * Math.sin(w * Math.PI));
-      R.sphere.rotation.y = Math.sin(w * Math.PI * 2) * 0.35;
+      R.ballRig.rotation.y = Math.sin(w * Math.PI * 2) * 0.35;
     } else if (R.t < 2.45) {
       const k = (R.t - 1.5) / 0.95;
       if (k < 0.36) {
@@ -1293,40 +1361,51 @@ function updateVerseReveal(dt) {
       } else {
         R.grp.position.lerpVectors(R.rise, R.target, easeOut((k - 0.36) / 0.64));
       }
-      R.sphere.rotation.y = (1 - easeOut(k)) * Math.PI * 2; // settles at 0 -> seam vertical
-      R.sphere.rotation.x = Math.sin(k * Math.PI) * 0.35;
+      R.ballRig.rotation.y = (1 - easeOut(k)) * Math.PI * 2; // settles at 0 -> vertical seam
+      R.ballRig.rotation.x = Math.sin(k * Math.PI) * 0.35;
       R.grp.scale.setScalar(0.5 + 0.95 * easeOut(k));
     } else {
       const h = (R.t - 2.45) / 1.0; // 0..1 over the 1.0s front hold
       R.grp.position.copy(R.target);
-      // subtle anticipation tremor in the last 0.35s before cracking open
+      // subtle anticipation tremor + hair-line gap in the last 0.35s before cracking open
       const trem = h > 0.65 ? (h - 0.65) / 0.35 : 0;
-      R.grp.position.x += Math.sin(R.t * 55) * 0.006 * trem;
-      R.sphere.rotation.set(0, 0, 0); // seam dead-vertical facing camera (panel 5)
+      R.grp.position.x += Math.sin(R.t * 55) * 0.005 * trem;
+      R.ballRig.rotation.set(0, 0, 0); // seam dead-vertical facing camera (panel 5)
+      R.halves[0].position.x = -trem * 0.012;
+      R.halves[1].position.x = trem * 0.012;
+      R.innerMat.emissiveIntensity = 0.08 + trem * 0.45;
       R.grp.scale.setScalar(1.45 + 0.05 * Math.sin(h * Math.PI));
       if (R.t >= 3.45) splitVerseBall(R);
     }
   } else {
     const k = Math.min(1, (R.t - R.splitT) / 1.35);
     const [hA, hB] = R.halves;
-    // panel 6: cups part left/right and yaw open toward camera (+Z) so you see the
-    // dark concave bowl interior + bright lip rim of both halves
+    // panel 6: the two solidified Blender bowls part left/right and yaw open toward
+    // camera (+Z) so you clearly see their concave inner walls + golden light inside
     const part = easeOut(Math.min(1, k / 0.45));
-    // panel 7: then both bowls tumble downward while the folded letter inside grows forward
+    // panel 7: then both bowls tumble downward while the light expands into the letter
     const drop = Math.max(0, (k - 0.42) / 0.58);
-    hA.position.set(-part * 0.26 - drop * 0.12, -drop * drop * 1.15, 0);
-    hB.position.set(part * 0.26 + drop * 0.12, -drop * drop * 1.15, 0);
-    hA.rotation.y = -part * 0.88;
-    hB.rotation.y = part * 0.88;
-    hA.rotation.z = part * 0.18 + drop * 1.35;
-    hB.rotation.z = -part * 0.18 - drop * 1.35;
+    hA.position.set(-part * 0.24 - drop * 0.10, -drop * drop * 1.05, 0);
+    hB.position.set(part * 0.24 + drop * 0.10, -drop * drop * 1.05, 0);
+    // left bowl's concave mouth faces +X -> negative Y rotation turns it toward +Z (camera)
+    hA.rotation.y = -part * 0.68;
+    hB.rotation.y = part * 0.68;
+    hA.rotation.z = part * 0.16 + drop * 1.25;
+    hB.rotation.z = -part * 0.16 - drop * 1.25;
     const op = 1 - drop * drop;
     R.mat.opacity = op;
-    if (R.innerMat) R.innerMat.opacity = op;
-    if (R.rimMat) R.rimMat.opacity = op;
-    if (R.crack) R.crack.intensity = Math.sin(Math.min(1, k * 1.4) * Math.PI) * 5;
-    // the letter opens out of that burst of light while the two glowing bowls drop away
-    if (!R.opened && R.t - R.splitT > 0.48) {
+    if (R.innerMat) {
+      R.innerMat.opacity = op;
+      R.innerMat.emissiveIntensity = 0.65 * (1 - drop * 0.5);
+    }
+    if (R.coreMesh) {
+      const ck = Math.sin(Math.min(1, k * 1.35) * Math.PI);
+      R.coreMesh.scale.setScalar(0.6 + part * 1.35);
+      R.coreMat.opacity = ck * 0.95;
+    }
+    if (R.crack) R.crack.intensity = Math.sin(Math.min(1, k * 1.4) * Math.PI) * 6;
+    // the letter opens out of that burst of light while the two concave bowls drop away
+    if (!R.opened && R.t - R.splitT > 0.52) {
       R.opened = true;
       openVerseCard(R.verse);
       sfx.paper();
@@ -1415,6 +1494,18 @@ gltfPromise.then((gltfs) => {
   };
   window.claw = claw; // console/probe access
   window.__cam = camera; window.__ctrl = controls; // test probes
+
+  // Load Diego's Blender solidified gift-sphere halves (75KB each) after the cabinet
+  const giftHalvesPromise = Promise.all([
+    loader.loadAsync('./assets/sphereLeft.glb'),
+    loader.loadAsync('./assets/sphereRight.glb'),
+  ]).then(([glL, glR]) => {
+    let leftGeo = null, rightGeo = null;
+    glL.scene.traverse((o) => { if (o.isMesh && !leftGeo) leftGeo = splitShellGroups(o.geometry); });
+    glR.scene.traverse((o) => { if (o.isMesh && !rightGeo) rightGeo = splitShellGroups(o.geometry); });
+    if (leftGeo && rightGeo) giftHalvesProto = { leftGeo, rightGeo };
+  }).catch(() => {});
+
   window.__verse = {
     pool: () => versePool,
     state: () => revealState,
@@ -1424,9 +1515,8 @@ gltfPromise.then((gltfs) => {
         const pr = claw.prizes.find((p) => p.verseIdx >= 0) || claw.prizes[0];
         revealQueue.push({ ...pr, verseIdx: i });
       };
-      // The pool may still be in flight on slow networks — wait for it so the
-      // preview reveals a verse, not just a light.
-      versesPromise ? versesPromise.then(go, go) : go();
+      // Wait for both verse pool and gift-sphere GLBs so the preview always uses the real model
+      Promise.all([versesPromise, giftHalvesPromise]).then(go, go);
     },
   };
   // material-variant preview: skip the flag, run the ball→object→open sequence

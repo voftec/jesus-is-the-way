@@ -348,7 +348,7 @@ export class ClawRig {
     this.t = 0;
     this.phase = 'idle';
     this.phaseTimer = 0;
-    this.autoDemo = true;
+    this.autoDemo = false;
     this.prizesWon = 0;
     this.lastWonPrize = '';
     this.onPrizeWon = null;
@@ -1513,15 +1513,18 @@ export class ClawRig {
         }
       } else if (this.phase === 'releasing') {
         if (this.phaseTimer > 1.2) {
-          this.phase = 'returning';
+          // Stay parked right where the play ended instead of sliding back across the background
+          this.autoDemo = false;
+          this.phase = 'idle';
           this.phaseTimer = 0;
-          this.targetTX = 0.25;
-          this.targetTZ = 0.0;
+          this.targetTX = anim.smoothTX;
+          this.targetTZ = anim.smoothTZ;
           this.targetDrop = DROP_REST;
           this.targetOpen = 0.82;
         }
       } else if (this.phase === 'returning') {
         if (this.phaseTimer > 1.5) {
+          this.autoDemo = false;
           this.phase = 'idle';
           this.phaseTimer = 0;
         }
