@@ -338,7 +338,7 @@ const floorMat = new THREE.ShaderMaterial({
   depthWrite: false,
   uniforms: {
     uMap: { value: floorTex },
-    uTiles: { value: 7.0 },
+    uTiles: { value: 15.0 },
   },
   vertexShader: `varying vec2 vUv;
     void main(){ vUv = uv; gl_Position = projectionMatrix*viewMatrix*modelMatrix*vec4(position,1.); }`,
@@ -348,14 +348,15 @@ const floorMat = new THREE.ShaderMaterial({
     void main(){
       float r = length(vUv - 0.5) * 2.0; // 0 center .. 1 edge
       vec3 tex = texture2D(uMap, vUv * uTiles).rgb;
-      // the chips sink into darkness before the alpha edge arrives — no seam
-      float dim = 1.0 - smoothstep(0.0, 0.88, r) * 0.82;
-      float a = (1.0 - smoothstep(0.42, 0.97, r)) * 0.92;
-      gl_FragColor = vec4(tex * dim, a);
+      // Edge must meet the panorama's own floor brightness or the disc reads as
+      // a hole — gentle dim, fine chips, dissolve only at the last stretch
+      float dim = 1.0 - smoothstep(0.0, 0.85, r) * 0.38;
+      float a = (1.0 - smoothstep(0.55, 0.98, r)) * 0.9;
+      gl_FragColor = vec4(tex * dim * 0.78, a);
       #include <colorspace_fragment>
     }`,
 });
-const floor = new THREE.Mesh(new THREE.CircleGeometry(6, 64), floorMat);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(5.2, 64), floorMat);
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -0.004;
 floor.renderOrder = -5;
