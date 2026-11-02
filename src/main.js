@@ -1604,16 +1604,6 @@ gltfPromise.then((gltfs) => {
   if (revealParam) setTimeout(() => {
     enterUI.btn.click();
     setTimeout(() => window.__verse.test(8), 1400);
-    // Autoplay policy: the programmatic enter leaves the AudioContext suspended —
-    // hint that one real tap restores sound. pointer-events:none so the tap also
-    // reaches the game's prewarm listener.
-    const hint = document.createElement('div');
-    hint.textContent = 'TOCA PARA SONIDO';
-    hint.style.cssText = 'position:fixed;left:50%;bottom:calc(var(--snap-bot,0px) + 90px);transform:translateX(-50%);z-index:60;padding:8px 16px;border-radius:999px;background:rgba(10,6,18,.72);border:1px solid rgba(255,214,130,.45);color:#ffd682;font:600 11px/1 -apple-system,system-ui,sans-serif;letter-spacing:.14em;pointer-events:none;opacity:0;transition:opacity .4s';
-    document.body.appendChild(hint);
-    requestAnimationFrame(() => hint.style.opacity = '1');
-    const off = () => { hint.style.opacity = '0'; setTimeout(() => hint.remove(), 500); removeEventListener('pointerdown', off, true); };
-    addEventListener('pointerdown', off, true);
   }, 500);
 
   // Frame the cabinet straight-on in the arcade room like the reference composition,
