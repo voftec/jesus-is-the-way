@@ -231,7 +231,7 @@
     background:linear-gradient(90deg, transparent, rgba(255,214,120,.45), transparent); }
   #chapter-title { font:900 15px/1 'Helvetica Neue',Arial,sans-serif; color:#f3d27a; letter-spacing:.18em; }
   #chapter-sub { margin-top:5px; font:600 10px/1.4 'Helvetica Neue',Arial,sans-serif; color:#8d84a8; letter-spacing:.08em; }
-  #chapter-body { flex:1; overflow-y:auto; padding:6px 20px calc(var(--snap-bot) + 20px);
+  #chapter-body { flex:1; overflow-y:auto; padding:6px 20px calc(var(--snap-bot) + 120px);
     -webkit-overflow-scrolling:touch; touch-action:pan-y; font-family:Georgia,serif;
     scrollbar-width:thin; scrollbar-color:rgba(255,214,120,.22) transparent; }
   #chapter-body::-webkit-scrollbar { width:5px; }
@@ -251,6 +251,7 @@
     display:flex; justify-content:center; padding:64px 0 calc(var(--snap-bot) + 14px);
     background:linear-gradient(180deg, rgba(8,6,16,0), rgba(8,6,16,.97) 58%); }
   /* Outside Snapchat there is no bottom chrome — the button rests in the dark zone */
+  body.no-snap #chapter-body { padding-bottom:110px; }
   body.no-snap #chapter-foot { padding-bottom:24px; }
   #chapter-back { width:min(70vw,280px); height:46px; border-radius:14px; border:0; pointer-events:auto;
     background:linear-gradient(180deg,#ffd76a,#f0a92e); color:#3a2400; cursor:pointer;
