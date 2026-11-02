@@ -94,10 +94,11 @@
 
   /* ---- Verse reveal: folded paper that opens over a dimmed, quiet scene ---- */
   #verse-reveal { position:fixed; inset:0; z-index:12; display:none; align-items:center; justify-content:center;
+    padding:var(--snap-top, 0px) 0 calc(var(--snap-bot, 0px) * 0.55 + 6vh); box-sizing:border-box;
     background:rgba(6,4,14,0); transition:background .6s; }
   #verse-reveal.on { display:flex; background:rgba(6,4,14,.55); }
-  #verse-paper { width:min(78vw, 340px); transform:scaleY(0.03) scale(.5) translateY(60px); opacity:0;
-    transform-origin:center 38%; transition:transform .6s cubic-bezier(.22,1.35,.36,1), opacity .3s;
+  #verse-paper { width:min(78vw, 340px); transform:scaleY(0.03) scale(.5) translateY(0); opacity:0;
+    transform-origin:center 50%; transition:transform .6s cubic-bezier(.22,1.35,.36,1), opacity .3s;
     /* aged parchment: sunlit center, fire-darkened edges, paper grain */
     background:
       radial-gradient(ellipse 130% 95% at 50% 40%, rgba(0,0,0,0) 52%, rgba(122,82,22,.30) 100%),
@@ -132,7 +133,8 @@
   /* CARTA — a folded letter, wax seal breaks open */
   #verse-paper.reveal-carta { border-radius:6px;
     background:linear-gradient(172deg,#f4ead2 0%,#ecdcb8 55%,#e0cb9e 100%);
-    transform:scaleY(.34) scale(.6) translateY(60px); }
+    transform:scaleY(.34) scale(.6) translateY(0); }
+  #verse-reveal.open #verse-paper.reveal-carta { transform:scaleY(1) scale(1) translateY(0); }
   #verse-paper.reveal-carta::before { content:''; top:50%; bottom:auto; left:50%; right:auto;
     width:34px; height:34px; margin:-17px 0 0 -17px; border-radius:50%;
     background:radial-gradient(circle at 38% 32%, #c94f38, #8e2517 62%, #671407);
