@@ -110,7 +110,14 @@
       0 0 0 1px rgba(140,98,38,.22) inset,
       0 -20px 36px rgba(118,80,20,.18) inset, 0 16px 32px rgba(255,244,208,.22) inset;
     filter:drop-shadow(0 0 22px rgba(255,214,120,.18)); }
-  #verse-reveal.open #verse-paper { transform:scaleY(1) scale(1) translateY(0); opacity:1; }
+  #verse-reveal.open #verse-paper { transform:scaleY(1) scale(1) translateY(0); opacity:1;
+    animation:wordGlow 2.4s ease-out .2s both; }
+  /* The Word is the light — the letter blooms a warm halo as it opens, then keeps a soft glow */
+  @keyframes wordGlow {
+    0%   { filter:drop-shadow(0 0 8px rgba(255,214,120,.06)); }
+    38%  { filter:drop-shadow(0 0 48px rgba(255,230,150,.6)); }
+    100% { filter:drop-shadow(0 0 24px rgba(255,214,120,.22)); }
+  }
   /* wooden rollers, top and bottom — the paper unrolls between them */
   #verse-paper::before, #verse-paper::after { content:''; position:absolute; left:-7px; right:-7px;
     height:15px; border-radius:8px; pointer-events:none;
@@ -342,6 +349,6 @@ window.__cabinetBuf = fetch('./assets/cabinet.min.glb').then(async (r) => {
   return buf.buffer;
 });
 </script>
-<script type="module" src="./bundle.js?v=368"></script>
+<script type="module" src="./bundle.js?v=369"></script>
 </body>
 </html>

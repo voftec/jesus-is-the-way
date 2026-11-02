@@ -57,6 +57,7 @@ const envSphereMat = new THREE.ShaderMaterial({
     uOffsetY: { value: skyCfg.offsetY },
     uBlur: { value: skyCfg.blur },
     uBrightness: { value: skyCfg.brightness },
+    uZoomK: { value: 0.5 },
   },
   vertexShader: `varying vec3 vWorldPos;
     void main() {
@@ -95,13 +96,16 @@ const envSphereMat = new THREE.ShaderMaterial({
       return c;
     }
 
+    uniform float uZoomK;
     void main() {
       // View direction from the camera so portrait FOV maps cleanly to the 360° panorama
       vec3 d = normalize(vWorldPos - cameraPosition);
       float yaw = atan(d.x, -d.z); // 0 straight ahead (-Z), negative left, positive right
-      float u = fract(uCenterU + (yaw / (2.0 * PI)) * uRepeat.x);
+      // Dolly parallax: zooming in magnifies the room like walking toward it
+      vec2 rep = uRepeat * mix(1.14, 0.88, uZoomK);
+      float u = fract(uCenterU + (yaw / (2.0 * PI)) * rep.x);
       float lat = asin(clamp(d.y, -1.0, 1.0)) / PI; // -0.5 (floor) .. +0.5 (ceiling)
-      float v = clamp(0.5 + (lat - uOffsetY) * uRepeat.y, 0.004, 0.996);
+      float v = clamp(0.5 + (lat - uOffsetY) * rep.y, 0.004, 0.996);
       vec3 col = sampleSmooth(vec2(u, v)) * uBrightness;
       gl_FragColor = vec4(col, 1.0);
       #include <colorspace_fragment>
@@ -874,7 +878,10 @@ function updateCabinetControls(dt) {
   deckCtrl.stickPivot.rotation.set(deckCtrl.stickZ * maxAngle, 0, -deckCtrl.stickX * maxAngle);
   if (deckCtrl.stickMesh.material && deckCtrl.stickMesh.material.emissive) {
     const tiltGlow = Math.min(1, Math.hypot(deckCtrl.stickX, deckCtrl.stickZ));
-    deckCtrl.stickMesh.material.emissive.setRGB(0.32 * tiltGlow, 0.05 * tiltGlow, 0.14 * tiltGlow);
+    // Invite the thumb without a word: the ball-top breathes a faint gold ember while the claw waits
+    const idle = (claw && claw.phase === 'idle' && !deckCtrl.draggingStick)
+      ? (0.5 + 0.5 * Math.sin(neonT * 1.6)) * 0.09 : 0;
+    deckCtrl.stickMesh.material.emissive.setRGB(0.32 * tiltGlow + idle, 0.05 * tiltGlow + idle * 0.72, 0.14 * tiltGlow + idle * 0.10);
   }
 
   // Drive gantry continuously while player tilts the 3D stick or holds keys
@@ -1380,6 +1387,12 @@ function stepDownQuality() {
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05); // 120Hz-safe delta clamp
   neonT += dt;
+  // Skybox dolly parallax — closer camera = bigger room features
+  {
+    const zd = camera.position.distanceTo(controls.target);
+    envSphereMat.uniforms.uZoomK.value = 1 - THREE.MathUtils.clamp(
+      (zd - controls.minDistance) / Math.max(0.001, controls.maxDistance - controls.minDistance), 0, 1);
+  }
   // Subtle arcade neon flicker around the base values (panel-controlled)
   bloomPass.strength = bloomBase * (0.9 + (Math.sin(neonT * 7.3) * 0.08 + Math.sin(neonT * 17.1) * 0.045) * flickAmp);
   glow2.material.opacity = glow2Base + Math.sin(neonT * 3.2) * 0.14 * flickAmp;
