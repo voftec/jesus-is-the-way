@@ -137,7 +137,7 @@ export function setMusicMode(mode) {
 function startMusic() {
   if (musicTimer || !ctx) return;
   musicGain = ctx.createGain();
-  musicGain.gain.value = 0.16; // sits quietly under the SFX
+  musicGain.gain.value = 0.5; // audible groove — still under the SFX peaks
   musicGain.connect(master);
   nextStepT = ctx.currentTime + 0.1;
   stepIdx = 0;
