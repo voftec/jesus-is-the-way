@@ -10,6 +10,7 @@
  *   floor and rebounds 2-3 times with spring wave + tilt before grabbing
  */
 import * as THREE from 'three';
+import { mergeGeometries } from '../vendor/addons/utils/BufferGeometryUtils.js';
 
 const RIG_SCALE = 0.22;
 const RIG_FLOOR_Y = -1.20;         // studio-space pit floor
@@ -287,6 +288,31 @@ class DynamicClawSpringCurve extends THREE.Curve {
 }
 
 // ---------------------------------------------------------------------------
+// Collapse a static multi-part prize into one mesh per (material, castShadow).
+// Merged meshes keep the order of their last part, so the last child's color is unchanged.
+function mergeByMaterial(g) {
+  const parts = new Map();
+  g.children.forEach((c, i) => {
+    const k = `${c.material.uuid}|${c.castShadow}`;
+    if (!parts.has(k)) parts.set(k, { mat: c.material, cast: c.castShadow, geos: [], last: i });
+    c.updateMatrix();
+    const e = parts.get(k);
+    e.geos.push(c.geometry.clone().applyMatrix4(c.matrix));
+    e.last = i;
+    c.geometry.dispose();
+  });
+  g.clear();
+  [...parts.values()].sort((a, b) => a.last - b.last).forEach((e) => {
+    const m = new THREE.Mesh(mergeGeometries(e.geos), e.mat);
+    m.castShadow = e.cast;
+    g.add(m);
+    e.geos.forEach((x) => x.dispose());
+  });
+}
+
+const _instMat = new THREE.Matrix4();
+const _instScale = new THREE.Vector3();
+
 export class ClawRig {
   constructor(machine, scene) {
     this.machine = machine;
@@ -733,6 +759,7 @@ export class ClawRig {
         g.add(arm);
       });
 
+      mergeByMaterial(g);
       const homePos = new THREE.Vector3(x, -0.12, z);
       const homeRot = new THREE.Euler(-0.45, rotY, Math.sin(x * 5) * 0.18);
       g.position.copy(homePos);
@@ -801,6 +828,7 @@ export class ClawRig {
     }));
     glassMats.forEach((m, i) => { m.userData.hex = ballPalette[i]; });
     this._glassMats = glassMats;
+    const ballItems = [];
     const ball = (bx, by, bz, i, glassy = false) => {
       const r = 0.10 + ((i * 37) % 5) * 0.008;
       const bg = new THREE.Group();
@@ -808,8 +836,10 @@ export class ClawRig {
         new THREE.SphereGeometry(r, 14, 12),
         (glassy ? glassMats : solidMats)[i % ballPalette.length]
       );
-      m.castShadow = true;
+      // drawn through the per-material InstancedMesh below; kept as the prize's color source
+      m.visible = false;
       bg.add(m);
+      ballItems.push({ bg, r, mat: m.material });
       const homePos = new THREE.Vector3(bx, by, bz);
       const homeRot = new THREE.Euler(0, i * 0.7, 0);
       bg.position.copy(homePos);
@@ -842,6 +872,31 @@ export class ClawRig {
           ball(bx, L.y + Math.sin(bx * 11 + bz * 13) * 0.03, bz, ballIdx++, li >= 3);
         }
       }
+    }
+
+    // ~200 balls share 16 materials: one instanced draw per material instead of one per ball
+    const unitBall = new THREE.SphereGeometry(1, 14, 12);
+    this._ballInst = [...glassMats, ...solidMats].map((mat) => {
+      const items = ballItems.filter((b) => b.mat === mat);
+      if (!items.length) return null;
+      const im = new THREE.InstancedMesh(unitBall, mat, items.length);
+      im.castShadow = true;
+      im.frustumCulled = false;
+      this.prizeGroup.add(im);
+      return { im, items };
+    }).filter(Boolean);
+    this.syncBallInstances();
+  }
+
+  syncBallInstances() {
+    for (const { im, items } of this._ballInst) {
+      for (let i = 0; i < items.length; i++) {
+        const { bg, r } = items[i];
+        _instScale.set(r, r, r).multiply(bg.scale);
+        _instMat.compose(bg.position, bg.quaternion, _instScale);
+        im.setMatrixAt(i, _instMat);
+      }
+      im.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -1381,6 +1436,7 @@ export class ClawRig {
 
   // Full studio grab-cycle state machine + floor-bounce physics step
   updateDemo(dt) {
+    if (!(dt > 0)) return; // same-timestamp frames would divide by zero below
     this.t += dt;
     const anim = this.anim;
     const ph = this.phys;

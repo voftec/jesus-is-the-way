@@ -12,13 +12,18 @@ import { OutputPass } from '../vendor/addons/postprocessing/OutputPass.js';
 
 // ---------- renderer / scene ----------
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+// ?nofx renders straight to screen: no bloom, no composer passes
+const noPostFx = new URLSearchParams(location.search).has('nofx');
+// With post-FX the scene renders into the composer's own MSAA target; canvas MSAA would be wasted
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: noPostFx, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.AgXToneMapping;
 renderer.toneMappingExposure = 1.1;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+// The shadow map is refreshed once per frame (before the beauty pass), not again for the bloom mask
+renderer.shadowMap.autoUpdate = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.transmissionResolutionScale = 0.5; // half-res refraction buffer for the glass balls
 
@@ -1321,8 +1326,6 @@ let neonT = 0;
 // Adaptive quality: if fps drops, step down (SAO off → transmission off → lower dpr)
 // ?fullfx in the URL forces max quality (no auto-degrade)
 const forceFullFx = location.search.includes('fullfx');
-// ?nofx renders straight to screen: no bloom, no composer passes
-const noPostFx = new URLSearchParams(location.search).has('nofx');
 let qualityTier = 0, fpsAcc = 0, fpsN = 0, fpsTimer = 0;
 function stepDownQuality() {
   qualityTier++;
@@ -1389,6 +1392,7 @@ renderer.setAnimationLoop(() => {
     // (dt→0 would divide by zero inside the trolley velocity math)
     hitstop = Math.max(0, hitstop - dt);
     claw.updateDemo(hitstop > 0 ? dt * 0.06 : dt);
+    claw.syncBallInstances();
     // Blob shadow tracking the claw over the pile surface (~world y ≈ 1.0)
     claw.clawGroup.getWorldPosition(_vTmp);
     blobShadow.position.set(_vTmp.x, 1.0, _vTmp.z);
@@ -1444,6 +1448,7 @@ renderer.setAnimationLoop(() => {
   }
   // Selective bloom: blacken non-neon, blur layer, then composite over normal render
   if (noPostFx) {
+    renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, camera);
   } else {
     if (!window.__nobloom) {
@@ -1451,6 +1456,7 @@ renderer.setAnimationLoop(() => {
       bloomComposer.render();
       restoreMaterials();
     }
+    renderer.shadowMap.needsUpdate = true;
     finalComposer.render();
   }
   // fps watchdog → adaptive quality tier
