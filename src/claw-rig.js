@@ -56,12 +56,12 @@ const WALL_X_MAX = 1.72;
 const WALL_Z_MIN = -1.72;
 const WALL_Z_MAX = 1.68;
 const CHUTE_KILL_Y = -2.1;             // below this the prize landed in the bin -> respawn
-// PRIZE OUT glass box footprint (matches tripo_part_7/32): outer walls around the chute hole
+// PRIZE OUT glass box footprint (matches vidrio_buzon: rig X -1.64..-0.34, Z -0.17..+1.45, topY -0.62)
 const CHUTE_BOX = {
-  xMin: -1.60, xMax: -0.42,
-  zMin: -0.16, zMax: 0.78,
-  topY: 0.72,                          // box rim height in rig space
-  holeX: -1.0, holeZ: 0.30, holeR: 0.30
+  xMin: -1.66, xMax: -0.34,
+  zMin: -0.17, zMax: 1.68,
+  topY: -0.58,                         // acrylic box rim height in rig space
+  holeX: -0.99, holeZ: 1.08, holeR: 0.48
 };
 
 const _tmpA = new THREE.Vector3();
@@ -412,7 +412,166 @@ export class ClawRig {
     this._buildTrolley();
     this._buildCords();
     this._buildClaw();
+    this._buildChuteRamp();
     this._buildPrizes();
+  }
+
+  // --- Stainless-steel prize chute hopper & directional metal ramp inside vidrio_buzon ---
+  // Seals the floor hole completely and guides dropped spheres forward (+Z) and down (-Y)
+  // straight toward the lower-left PRIZE OUT door (tripo_part_33 / tripo_part_20).
+  _buildChuteRamp() {
+    const g = new THREE.Group();
+    this.rigGroup.add(g);
+
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0xdbe3ee,
+      metalness: 0.90,
+      roughness: 0.22,
+      envMapIntensity: 1.25,
+      side: THREE.DoubleSide
+    });
+    const chromeMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      metalness: 0.97,
+      roughness: 0.08,
+      envMapIntensity: 1.4
+    });
+    const darkHousingMat = new THREE.MeshStandardMaterial({
+      color: 0x161b26,
+      metalness: 0.72,
+      roughness: 0.45,
+      side: THREE.DoubleSide
+    });
+    const throatDarkMat = new THREE.MeshStandardMaterial({
+      color: 0x090b10,
+      metalness: 0.35,
+      roughness: 0.85,
+      side: THREE.DoubleSide
+    });
+
+    const xMin = -1.61, xMax = -0.37;
+    const zMin = -0.15, zMax = 1.43;
+    const cx = (xMin + xMax) * 0.5;   // -0.99
+    const cz = (zMin + zMax) * 0.5;   // +0.64
+    const w = xMax - xMin;            // 1.24
+    const d = zMax - zMin;            // 1.58
+    const floorY = FLOOR_Y;           // -1.20
+
+    // 1. Blind dark steel housing box below the floor cutout so the arcade floor behind never shows through
+    const wellDepth = 1.35;
+    const wellY = floorY - wellDepth * 0.5 - 0.01;
+    const wallThick = 0.035;
+    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wellDepth, d + 0.04), darkHousingMat);
+    leftWall.position.set(xMin + wallThick * 0.5, wellY, cz);
+    g.add(leftWall);
+    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wellDepth, d + 0.04), darkHousingMat);
+    rightWall.position.set(xMax - wallThick * 0.5, wellY, cz);
+    g.add(rightWall);
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, wellDepth, wallThick), darkHousingMat);
+    backWall.position.set(cx, wellY, zMin + wallThick * 0.5);
+    g.add(backWall);
+    const frontWall = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, wellDepth, wallThick), darkHousingMat);
+    frontWall.position.set(cx, wellY, zMax - wallThick * 0.5);
+    g.add(frontWall);
+    const bottomPlate = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, wallThick, d + 0.04), throatDarkMat);
+    bottomPlate.position.set(cx, floorY - wellDepth, cz);
+    g.add(bottomPlate);
+
+    // 2. Brushed stainless-steel perimeter rim flush with the pit floor around the chute opening
+    const rimH = 0.032, rimW = 0.065;
+    const rimY = floorY + rimH * 0.35;
+    const rimFront = new THREE.Mesh(new THREE.BoxGeometry(w + rimW, rimH, rimW), chromeMat);
+    rimFront.position.set(cx, rimY, zMax - rimW * 0.3);
+    g.add(rimFront);
+    const rimBack = new THREE.Mesh(new THREE.BoxGeometry(w + rimW, rimH, rimW), chromeMat);
+    rimBack.position.set(cx, rimY, zMin + rimW * 0.3);
+    g.add(rimBack);
+    const rimLeft = new THREE.Mesh(new THREE.BoxGeometry(rimW, rimH, d), chromeMat);
+    rimLeft.position.set(xMin + rimW * 0.3, rimY, cz);
+    g.add(rimLeft);
+    const rimRight = new THREE.Mesh(new THREE.BoxGeometry(rimW, rimH, d), chromeMat);
+    rimRight.position.set(xMax - rimW * 0.3, rimY, cz);
+    g.add(rimRight);
+
+    // 3. Main inclined stainless-steel slide: starts high at the back wall (zMin, y = -0.88)
+    //    and slopes forward (+Z) and down (-Y) toward the front throat leading to PRIZE OUT.
+    const zStart = zMin + 0.03;       // -0.12
+    const yStart = floorY + 0.28;     // -0.92 (rises up against back of chute box)
+    const zKnee = 0.96;               // front throat drop-off
+    const yKnee = floorY - 0.34;      // -1.54
+    const dz1 = zKnee - zStart;       // 1.08
+    const dy1 = yKnee - yStart;       // -0.62
+    const len1 = Math.hypot(dz1, dy1);
+    const pitch1 = Math.atan2(-dy1, dz1); // ~30° downward slope toward +Z (PRIZE OUT door)
+
+    const mainSlide = new THREE.Mesh(new THREE.BoxGeometry(w - 0.08, 0.028, len1), steelMat);
+    mainSlide.position.set(cx, (yStart + yKnee) * 0.5, (zStart + zKnee) * 0.5);
+    mainSlide.rotation.x = pitch1;
+    mainSlide.receiveShadow = true;
+    g.add(mainSlide);
+
+    // Back vertical stainless riser sealing between yStart and the back rim
+    const backRiserH = yStart - floorY + 0.08;
+    const backRiser = new THREE.Mesh(new THREE.BoxGeometry(w - 0.08, backRiserH, 0.028), steelMat);
+    backRiser.position.set(cx, floorY + backRiserH * 0.5 - 0.03, zStart - 0.01);
+    g.add(backRiser);
+
+    // 4. Deep dark throat tunnel at the front of the ramp (z = 0.96..1.40) plunging straight down
+    //    into the lower-left PRIZE OUT door so you see the ramp feeding into the door's shaft
+    const zEnd = zMax - 0.05;         // 1.38
+    const yEnd = floorY - 1.15;       // -2.35
+    const dz2 = zEnd - zKnee;
+    const dy2 = yEnd - yKnee;
+    const len2 = Math.hypot(dz2, dy2);
+    const pitch2 = Math.atan2(-dy2, dz2);
+
+    const throatSlide = new THREE.Mesh(new THREE.BoxGeometry(w - 0.14, 0.026, len2), darkHousingMat);
+    throatSlide.position.set(cx, (yKnee + yEnd) * 0.5, (zKnee + zEnd) * 0.5);
+    throatSlide.rotation.x = pitch2;
+    g.add(throatSlide);
+
+    // Curved chrome lip at the knee where the brushed steel ramp drops into the dark PRIZE OUT shaft
+    const kneeLipGeo = new THREE.CylinderGeometry(0.024, 0.024, w - 0.10, 14);
+    kneeLipGeo.rotateZ(Math.PI * 0.5);
+    const kneeLip = new THREE.Mesh(kneeLipGeo, chromeMat);
+    kneeLip.position.set(cx, yKnee + 0.008, zKnee);
+    g.add(kneeLip);
+
+    // 5. Angled side funnel cheeks (bent sheet-metal wings) that channel balls toward the center trough
+    const cheekW = 0.30;
+    const cheekRoll = 0.50; // ~29° inward bank
+    [-1, 1].forEach((side) => {
+      const cheek = new THREE.Mesh(new THREE.BoxGeometry(cheekW, 0.022, len1 * 0.98), steelMat);
+      cheek.position.set(
+        cx + side * (w * 0.5 - cheekW * 0.42),
+        (yStart + yKnee) * 0.5 + 0.072,
+        (zStart + zKnee) * 0.5
+      );
+      cheek.rotation.order = 'XZY';
+      cheek.rotation.x = pitch1;
+      cheek.rotation.z = -side * cheekRoll;
+      cheek.receiveShadow = true;
+      g.add(cheek);
+    });
+
+    // 6. Longitudinal polished chrome guide rails along the ramp pointing toward the front door
+    const railGeo = new THREE.CylinderGeometry(0.015, 0.015, len1 * 0.94, 12);
+    railGeo.rotateX(Math.PI * 0.5);
+    [-0.28, -0.09, 0.09, 0.28].forEach((rx) => {
+      const rail = new THREE.Mesh(railGeo, chromeMat);
+      rail.position.set(
+        cx + rx,
+        (yStart + yKnee) * 0.5 + 0.021,
+        (zStart + zKnee) * 0.5
+      );
+      rail.rotation.x = pitch1;
+      g.add(rail);
+    });
+
+    // 7. Narrow front stainless apron sealing the gap between the front floor edge and zMax of vidrio_buzon
+    const frontApron = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 0.026, 0.28), steelMat);
+    frontApron.position.set(cx, floorY + 0.002, zMax + 0.12);
+    g.add(frontApron);
   }
 
   // --- A. Fixed Z rails + mobile X bridge fitted flush to the cabinet roof frame ---
@@ -716,78 +875,16 @@ export class ClawRig {
     return this.verseDeck[this._deckPos++];
   }
 
-  // --- E. Plush prizes spread across the entire cabinet floor (avoiding the front-left chute box) ---
+  // --- E. Sphere prizes only (no plush toys) spread across the cabinet floor ---
   _buildPrizes() {
     this.prizeGroup = new THREE.Group();
     this.rigGroup.add(this.prizeGroup);
-    const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.2 });
-
-    const plush = (name, x, z, bodyHex, accentHex, shirtHex, rotY) => {
-      const g = new THREE.Group();
-      const body = new THREE.MeshStandardMaterial({ color: bodyHex, roughness: 0.82 });
-      const accent = new THREE.MeshStandardMaterial({ color: accentHex, roughness: 0.75 });
-
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 18, 16), body);
-      head.scale.set(1.08, 0.96, 0.98);
-      head.position.set(0, 0.14, 0.04);
-      head.castShadow = true;
-      g.add(head);
-      const snout = new THREE.Mesh(new THREE.SphereGeometry(0.085, 14, 12), accent);
-      snout.position.set(0, 0.11, 0.16);
-      g.add(snout);
-      [-0.065, 0.065].forEach((ex) => {
-        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 10), eyeMat);
-        eye.position.set(ex, 0.16, 0.175);
-        g.add(eye);
-      });
-      [-0.1, 0.1].forEach((ex) => {
-        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.11, 10), body);
-        ear.position.set(ex, 0.28, 0.02);
-        ear.rotation.z = ex < 0 ? 0.25 : -0.25;
-        g.add(ear);
-      });
-      const torsoMat = shirtHex ? new THREE.MeshStandardMaterial({ color: shirtHex, roughness: 0.85 }) : body;
-      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.14, 8, 14), torsoMat);
-      torso.position.set(0, -0.04, -0.04);
-      torso.rotation.x = 0.55;
-      torso.castShadow = true;
-      g.add(torso);
-      [-0.15, 0.15].forEach((lx) => {
-        const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.1, 6, 10), torsoMat);
-        arm.position.set(lx, -0.02, 0.02);
-        arm.rotation.z = lx < 0 ? 0.65 : -0.65;
-        g.add(arm);
-      });
-
-      mergeByMaterial(g);
-      const homePos = new THREE.Vector3(x, -0.12, z);
-      const homeRot = new THREE.Euler(-0.45, rotY, Math.sin(x * 5) * 0.18);
-      g.position.copy(homePos);
-      g.rotation.copy(homeRot);
-      this.prizeGroup.add(g);
-      const pr = { name, mesh: g, homePos, homeRot, radius: 0.24, grabbed: false, droppingInChute: false, fallVel: 0, verseIdx: this._dealVerseIdx() };
-      this.prizes.push(pr);
-      // Plush rigid body: compound head + torso spheres
-      this._addBody(pr, 0.9, 0.5, [
-        { off: new THREE.Vector3(0, 0.14, 0.04), r: 0.17 },
-        { off: new THREE.Vector3(0, -0.05, -0.04), r: 0.16 }
-      ], 0.24);
-    };
-
-    // Spread across both the front-right and rear floor so the whole pit looks rich
-    plush('Shiba Hoodie', 0.45, 0.35, 0xea580c, 0xfef3c7, 0x7f1d1d, -0.35);
-    plush('Paloma Azul', 0.12, -0.22, 0x60a5fa, 0xf8fafc, 0x334155, 0.4);
-    plush('Llama Beige', 0.82, 0.72, 0xd6b89c, 0xfef3c7, null, 0.25);
-    plush('Mono Arcade', 0.95, -0.55, 0x78350f, 0xfde68a, null, -0.6);
-    plush('Palta Plush', 1.05, 0.18, 0x4d7c0f, 0xd9f99d, null, 0.8);
-    plush('Oso Polar', -0.25, -0.72, 0xe2e8f0, 0xfef3c7, 0x1d4ed8, 0.5);
-    plush('Fútbol Pro', 0.38, -0.88, 0x9a3412, 0xfef3c7, null, 1.1);
 
     const capPalette = [0xf43f5e, 0x3b82f6, 0x10b981, 0xfbbf24, 0xa855f7];
     const capSpots = [
       [0.15, 0.82], [0.55, 0.95], [1.12, 0.78], [0.72, -0.15],
       [1.15, -0.25], [0.05, -0.62], [-0.72, -0.78], [0.78, -0.92],
-      [-0.22, 0.15], [0.48, 0.02]
+      [0.08, 0.55], [0.48, 0.02]
     ];
     capSpots.forEach(([tx, tz], i) => {
       const cg = new THREE.Group();
@@ -1063,9 +1160,23 @@ export class ClawRig {
         b.vel.clampLength(0, 4.5);
         b.pos.addScaledVector(b.vel, h);
 
-        // Floor: pit floor everywhere except over the chute hole
+        // Floor: pit floor everywhere outside the chute; inside the chute, balls land on the
+        // inclined stainless-steel ramp and roll forward (+Z) into the front throat (z > 1.04).
         const minSphereY = b.pos.y - Math.max(...b.spheres.map(sp => sp.r)) * 0.8;
-        if (!inHole && minSphereY < FLOOR_Y) {
+        const inChuteFootprint = b.pos.x > bx0.xMin && b.pos.x < bx0.xMax && b.pos.z > bx0.zMin && b.pos.z < bx0.zMax;
+        if (pr.droppingInChute || inChuteFootprint) {
+          pr.droppingInChute = true;
+          // Ramp surface height: slopes from y = -0.92 at z = -0.12 down to y = -1.54 at z = 0.96, then plunges
+          const rampT = Math.max(0, Math.min(1, (b.pos.z - (-0.12)) / 1.08));
+          const rampY = b.pos.z < 0.96 ? (-0.92 - rampT * 0.62) : (-1.54 - (b.pos.z - 0.96) * 2.4);
+          if (minSphereY < rampY) {
+            b.pos.y += rampY - minSphereY;
+            if (b.vel.y < 0) b.vel.y = -b.vel.y * 0.25;
+            // Accelerate down the metal slope toward the front PRIZE OUT throat (+Z) and center trough
+            b.vel.z += 5.8 * h;
+            b.vel.x += (bx0.holeX - b.pos.x) * 7.0 * h;
+          }
+        } else if (!inHole && minSphereY < FLOOR_Y) {
           b.contacted = true;
           b.pos.y += FLOOR_Y - minSphereY;
           if (b.vel.y < 0) {

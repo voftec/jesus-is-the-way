@@ -1717,7 +1717,6 @@ renderer.setAnimationLoop(() => {
         const dy = cg.y - pr.body.pos.y;
         if (Math.hypot(pr.body.pos.x - cg.x, pr.body.pos.z - cg.z) > 0.55 || dy > 0.75) {
           nearMissDone = true;
-          showToast('¡CASI!', false);
           sfx.slip();
           break;
         }
