@@ -789,8 +789,11 @@ function setupCabinetControls(root) {
     : sBox;
   const baseCenterWorld = baseBox.getCenter(new THREE.Vector3());
 
-  // Procedural crisp circular arcade dust-cover cap replacing the simplified tripo_part_62 mesh
+  // Hide the lumpy AI-scanned stick + base and build a crisp Japanese Sanwa JLF ball-top
+  // arcade joystick centered dead-on the control deck
+  stickMesh.visible = false;
   if (stickBaseMesh) stickBaseMesh.visible = false;
+
   const capCenterWorld = new THREE.Vector3(
     baseCenterWorld.x,
     baseBox.min.y + (baseBox.max.y - baseBox.min.y) * 0.58,
@@ -800,58 +803,72 @@ function setupCabinetControls(root) {
   capGroup.position.copy(capCenterWorld);
   capGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), _panelNormal);
   const capMat = new THREE.MeshStandardMaterial({
-    color: 0x101217, roughness: 0.26, metalness: 0.35, clearcoat: 0.75, clearcoatRoughness: 0.18,
+    color: 0x101217, roughness: 0.28, metalness: 0.3, clearcoat: 0.7, clearcoatRoughness: 0.2,
   });
   const capRimMat = new THREE.MeshStandardMaterial({
-    color: 0x2a2f3a, roughness: 0.22, metalness: 0.55,
+    color: 0x2c3240, roughness: 0.2, metalness: 0.65,
   });
-  const capDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.039, 0.042, 0.0065, 56), capMat);
-  const capLip = new THREE.Mesh(new THREE.TorusGeometry(0.0395, 0.0024, 14, 56), capRimMat);
+  const capDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.039, 0.0425, 0.0055, 64), capMat);
+  const capLip = new THREE.Mesh(new THREE.TorusGeometry(0.0395, 0.0022, 16, 64), capRimMat);
   capLip.rotation.x = Math.PI / 2;
-  capLip.position.y = 0.003;
-  const capCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.0135, 0.0155, 0.009, 36), capRimMat);
-  capCollar.position.y = 0.0035;
+  capLip.position.y = 0.0026;
   const capWell = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.0105, 0.0105, 0.010, 32),
+    new THREE.CylinderGeometry(0.0135, 0.0135, 0.0062, 36),
     new THREE.MeshBasicMaterial({ color: 0x050608 })
   );
-  capWell.position.y = 0.0038;
-  capGroup.add(capDisc, capLip, capCollar, capWell);
+  capWell.position.y = 0.0005;
+  const pivotDome = new THREE.Mesh(
+    new THREE.SphereGeometry(0.0125, 28, 16, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    capMat
+  );
+  pivotDome.position.y = 0.001;
+  capGroup.add(capDisc, capLip, capWell, pivotDome);
   scene.add(capGroup);
 
-  // Re-center every horizontal slice of tripo_part_30 in world space so the shaft and ball-top
-  // sit concentrically on the exact axis of the circular cap (fixes the Tripo scan's forward slant)
-  stickMesh.geometry = stickMesh.geometry.clone();
-  const sPos = stickMesh.geometry.attributes.position;
-  const invStickWorld = stickMesh.matrixWorld.clone().invert();
-  const nBins = 12;
-  const bins = Array.from({ length: nBins }, () => ({ n: 0, sx: 0, sz: 0 }));
-  const wPts = [];
-  for (let i = 0; i < sPos.count; i++) {
-    _vTmp.fromBufferAttribute(sPos, i).applyMatrix4(stickMesh.matrixWorld);
-    wPts.push(_vTmp.x, _vTmp.y, _vTmp.z);
-    const bi = Math.min(nBins - 1, Math.max(0, Math.floor(((_vTmp.y - sBox.min.y) / (sBox.max.y - sBox.min.y)) * nBins)));
-    bins[bi].n++; bins[bi].sx += _vTmp.x; bins[bi].sz += _vTmp.z;
-  }
-  // Axis goes from capCenterWorld straight up with a tiny forward tilt matching the panel normal
-  for (let i = 0; i < sPos.count; i++) {
-    const wx = wPts[i * 3], wy = wPts[i * 3 + 1], wz = wPts[i * 3 + 2];
-    const bi = Math.min(nBins - 1, Math.max(0, Math.floor(((wy - sBox.min.y) / (sBox.max.y - sBox.min.y)) * nBins)));
-    const b = bins[bi];
-    const sliceCX = b.n ? b.sx / b.n : capCenterWorld.x;
-    const sliceCZ = b.n ? b.sz / b.n : capCenterWorld.z;
-    const h = Math.max(0, wy - capCenterWorld.y);
-    const axisX = capCenterWorld.x;
-    const axisZ = capCenterWorld.z + h * 0.14;
-    _vTmp.set(wx - sliceCX + axisX, wy, wz - sliceCZ + axisZ).applyMatrix4(invStickWorld);
-    sPos.setXYZ(i, _vTmp.x, _vTmp.y, _vTmp.z);
-  }
-  sPos.needsUpdate = true;
-  stickMesh.geometry.computeBoundingBox();
-  stickMesh.geometry.computeBoundingSphere();
+  // World-space joystick assembly: base frame aligned somewhat with panel, stick upright at rest
+  const stickPivotWorld = capCenterWorld.clone().addScaledVector(_panelNormal, 0.003);
+  const stickPivot = new THREE.Group();
+  stickPivot.position.copy(stickPivotWorld);
+  scene.add(stickPivot);
 
-  const stickPivotWorld = capCenterWorld.clone().addScaledVector(_panelNormal, 0.004);
-  const stickPivot = wrapAtWorldPivot(stickMesh, stickPivotWorld);
+  const sleeveMat = new THREE.MeshStandardMaterial({
+    color: 0x161922, roughness: 0.32, metalness: 0.4, clearcoat: 0.5,
+  });
+  const chromeMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0, roughness: 0.12, metalness: 0.92,
+  });
+  const ballMat = new THREE.MeshPhysicalMaterial({
+    color: 0xd93829,
+    roughness: 0.12,
+    metalness: 0.04,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.05,
+    specularIntensity: 1.0,
+    emissive: new THREE.Color(0x000000),
+  });
+
+  // Lower black shaft sleeve + polished chrome upper shaft + bevel ferrule + glossy ball-top
+  const shaftSleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.0068, 0.0082, 0.028, 32), sleeveMat);
+  shaftSleeve.position.y = 0.014;
+  shaftSleeve.castShadow = true;
+
+  const chromeShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.0052, 0.0056, 0.022, 32), chromeMat);
+  chromeShaft.position.y = 0.033;
+  chromeShaft.castShadow = true;
+
+  const neckFerrule = new THREE.Mesh(new THREE.CylinderGeometry(0.0088, 0.0062, 0.0055, 32), chromeMat);
+  neckFerrule.position.y = 0.0435;
+
+  const ballTop = new THREE.Mesh(new THREE.SphereGeometry(0.0265, 48, 36), ballMat);
+  ballTop.position.y = 0.066;
+  ballTop.castShadow = true;
+
+  // subtle creamy specular ring around the neck base like classic Japanese arcade sticks
+  const collarRing = new THREE.Mesh(new THREE.TorusGeometry(0.0072, 0.0012, 12, 32), chromeMat);
+  collarRing.rotation.x = Math.PI / 2;
+  collarRing.position.y = 0.028;
+
+  stickPivot.add(shaftSleeve, collarRing, chromeShaft, neckFerrule, ballTop);
 
   if (!btnMesh.geometry.boundingBox) btnMesh.geometry.boundingBox = new THREE.Box3().setFromBufferAttribute(btnMesh.geometry.attributes.position);
   const bBox = btnMesh.geometry.boundingBox.clone().applyMatrix4(btnMesh.matrixWorld);
@@ -864,10 +881,6 @@ function setupCabinetControls(root) {
   deckCtrl.btnRestY = btnPivot.position.y;
   deckCtrl.btnRestZ = btnPivot.position.z;
 
-  stickMesh.material = stickMesh.material.clone();
-  stickMesh.material.roughness = 0.2;
-  stickMesh.material.clearcoat = 1.0;
-  stickMesh.material.clearcoatRoughness = 0.08;
   btnMesh.material = btnMesh.material.clone();
   btnMesh.material.roughness = 0.22;
   btnMesh.material.clearcoat = 1.0;
@@ -932,8 +945,8 @@ function setupCabinetControls(root) {
   scene.add(stickCollider, btnCollider);
 
   Object.assign(deckCtrl, {
-    stickMesh,
-    stickBaseMesh,
+    stickMesh: ballTop,
+    stickBaseMesh: capDisc,
     stickPivot,
     stickCollider,
     btnMesh,
