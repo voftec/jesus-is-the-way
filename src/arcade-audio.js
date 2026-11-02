@@ -19,6 +19,17 @@ function ensureCtx() {
   return ctx;
 }
 
+// Resume the context on any gesture WITHOUT starting music/ambience —
+// the flag screen must stay silent; sound only exists once you enter.
+export function prewarmAudio() { ensureCtx(); }
+
+// Duck the entire audio bus — silence while the Word is on screen.
+export function duckAudio(on) {
+  const c = ensureCtx();
+  if (!c || !master) return;
+  master.gain.setTargetAtTime(on ? 0 : 1, c.currentTime, 0.35);
+}
+
 // Call from the first user gesture (Snap requires audio to unlock post-gesture).
 export function initAudio() {
   const c = ensureCtx();

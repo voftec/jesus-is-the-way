@@ -3,7 +3,7 @@ import { GLTFLoader } from '../vendor/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from '../vendor/addons/controls/OrbitControls.js';
 import { MeshoptDecoder } from '../vendor/addons/libs/meshopt_decoder.module.js';
 import { ClawRig } from './claw-rig.js';
-import { initAudio, sfx, setMusicMode } from './arcade-audio.js';
+import { initAudio, prewarmAudio, duckAudio, sfx, setMusicMode } from './arcade-audio.js';
 import { EffectComposer } from '../vendor/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from '../vendor/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from '../vendor/addons/postprocessing/ShaderPass.js';
@@ -634,7 +634,7 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.code));
 
 // WebAudio unlocks on the first user gesture (Snap webview requirement)
-addEventListener('pointerdown', () => initAudio(), { capture: true });
+addEventListener('pointerdown', () => prewarmAudio(), { capture: true });
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!claw || !deckCtrl.stickPivot) return;
@@ -1070,11 +1070,14 @@ function openVerseCard(v) {
   verseUI.ref.textContent = v ? v.r.toUpperCase() : '';
   verseUI.wrap.classList.add('on');
   requestAnimationFrame(() => requestAnimationFrame(() => verseUI.wrap.classList.add('open')));
+  // The paper finishes speaking, then the arcade goes silent — the Word stays
+  setTimeout(() => { if (verseUI.wrap.classList.contains('open')) duckAudio(true); }, 950);
 }
 
 function closeVerseCard() {
   verseUI.sheet.classList.remove('on');
   verseUI.wrap.classList.remove('open');
+  duckAudio(false);
   setTimeout(() => {
     verseUI.wrap.classList.remove('on');
     if (revealState) {
