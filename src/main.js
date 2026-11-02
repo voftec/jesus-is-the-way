@@ -1203,8 +1203,7 @@ const files = variant === 'rig'
   ? ['./assets/cabinet.min.glb']
   : [variant === 'hq' ? './assets/claw-machine-hq.min.glb' : './assets/claw-machine.min.glb'];
 
-Promise.all(files.map((f) => loader.loadAsync(f))).then(async (gltfs) => {
-  await versesPromise; // whichever language is selected when the GLB lands
+Promise.all(files.map((f) => loader.loadAsync(f))).then((gltfs) => {
   machine = new THREE.Group();
   for (const g of gltfs) machine.add(g.scene);
 
