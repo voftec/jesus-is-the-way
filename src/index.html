@@ -297,6 +297,50 @@
     <button id="enter-btn">TAP TO ENTER</button>
   </div>
 </div>
-<script type="module" src="./bundle.js?v=367"></script>
+<script>
+// Instant flag + early cabinet fetch + perf marks — all before the engine bundle arrives.
+window.__perf = [['boot', Math.round(performance.now())]];
+const __mark = (n) => window.__perf.push([n, Math.round(performance.now())]);
+(() => {
+  const S = {
+    en: ['Welcome', 'CHOOSE YOUR LANGUAGE', 'TAP TO ENTER'],
+    es: ['Bienvenido', 'ELIGE TU IDIOMA', 'TOCA PARA ENTRAR'],
+    pt: ['Bem-vindo', 'ESCOLHA SEU IDIOMA', 'TOQUE PARA ENTRAR'],
+    de: ['Willkommen', 'WÄHLE DEINE SPRACHE', 'TIPPEN ZUM STARTEN'],
+    it: ['Benvenuto', 'SCEGLI LA TUA LINGUA', 'TOCCA PER ENTRARE'],
+  };
+  const l = ((navigator.language || 'en').slice(0, 2) || 'en').toLowerCase();
+  const s = S[l] || S.en;
+  document.getElementById('enter-verse').textContent = s[0];
+  document.getElementById('enter-ref').textContent = s[1];
+  document.getElementById('enter-btn').textContent = s[2];
+  const chips = document.querySelectorAll('#enter-langs button');
+  chips.forEach((b) => b.classList.toggle('on', b.dataset.lang === l));
+  // Taps before the engine bundle arrives still count — main.js picks this up.
+  chips.forEach((b) => b.addEventListener('click', () => { window.__pendingLang = b.dataset.lang; }));
+  __mark('flag-text');
+})();
+// Fetch the cabinet while the bundle downloads — the flag needs nothing else.
+const __barEl = document.querySelector('#bar i');
+window.__cabinetBuf = fetch('./assets/cabinet.min.glb').then(async (r) => {
+  const total = +r.headers.get('content-length') || 2600000;
+  const rd = r.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await rd.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    if (__barEl) __barEl.style.width = `${Math.min(80, (got / total) * 80).toFixed(1)}%`;
+  }
+  const buf = new Uint8Array(got);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.length; }
+  __mark('glb-fetched');
+  return buf.buffer;
+});
+</script>
+<script type="module" src="./bundle.js?v=368"></script>
 </body>
 </html>

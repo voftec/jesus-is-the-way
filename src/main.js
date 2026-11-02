@@ -527,7 +527,11 @@ controls.rotateSpeed = 0.9;
 controls.zoomSpeed = 0.8;
 
 // ---------- load the claw machine ----------
+const perfMark = (n) => window.__perf && window.__perf.push([n, Math.round(performance.now())]);
+perfMark('bundle-eval');
 const loader = new GLTFLoader();
+// Decode meshopt buffers off the main thread — the flag stays smooth during parse.
+try { MeshoptDecoder.useWorkers(Math.min(4, navigator.hardwareConcurrency || 2)); } catch (_) {}
 loader.setMeshoptDecoder(MeshoptDecoder);
 
 const loadBar = document.querySelector('#bar i');
@@ -945,7 +949,7 @@ const I18N = {
   it: { welcome: 'Benvenuto', pick: 'SCEGLI LA TUA LINGUA', enter: 'TOCCA PER ENTRARE', share: 'CONDIVIDI', read: 'CONTINUA A LEGGERE', back: 'TORNA ALLA MACCHINA', trans: 'RIVEDUTA 1927' },
 };
 const FULL_BIBLE_LANGS = new Set(['en', 'es']);
-let lang = (navigator.language || 'en').slice(0, 2).toLowerCase();
+let lang = window.__pendingLang || (navigator.language || 'en').slice(0, 2).toLowerCase();
 if (!I18N[lang]) lang = 'en';
 let versesPromise = null;
 let entered = false;
@@ -973,7 +977,12 @@ function applyStrings() {
 function loadLangPool(l) {
   lang = l;
   applyStrings();
-  versesPromise = fetch(`./assets/verses-${l}.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  // Don't steal bandwidth from the cabinet download — the pool fetches right after it.
+  const gate = (window.__cabinetBuf || Promise.resolve()).catch(() => {});
+  versesPromise = gate
+    .then(() => fetch(`./assets/verses-${l}.json`))
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
   versesPromise.then((d) => {
     if (!d?.verses?.length || l !== lang) return;
     versePool = d.verses;
@@ -1002,6 +1011,7 @@ document.querySelectorAll('#enter-langs button').forEach((b) => {
 enterUI.btn.addEventListener('click', () => {
   if (entered) return;
   entered = true;
+  perfMark('enter-tap');
   initAudio();
   enterUI.screen.classList.add('off');
 });
@@ -1205,7 +1215,16 @@ const files = variant === 'rig'
   ? ['./assets/cabinet.min.glb']
   : [variant === 'hq' ? './assets/claw-machine-hq.min.glb' : './assets/claw-machine.min.glb'];
 
-Promise.all(files.map((f) => loader.loadAsync(f))).then((gltfs) => {
+// The index.html bootstrap already fetched the cabinet into an ArrayBuffer (with real
+// progress on the loading bar) — parse that instead of asking the network again.
+const gltfPromise = (variant === 'rig' && window.__cabinetBuf)
+  ? window.__cabinetBuf
+      .then((buf) => loader.parseAsync(buf, ''))
+      .then((g) => { perfMark('glb-parsed'); if (loadBar) loadBar.style.width = '90%'; return [g]; },
+            () => loader.loadAsync(files[0]).then((g) => [g]))
+  : Promise.all(files.map((f) => loader.loadAsync(f)));
+
+gltfPromise.then((gltfs) => {
   machine = new THREE.Group();
   for (const g of gltfs) machine.add(g.scene);
 
@@ -1275,8 +1294,13 @@ Promise.all(files.map((f) => loader.loadAsync(f))).then((gltfs) => {
     pool: () => versePool,
     // debug: push a fake win carrying pool index i (default random prize)
     test(i = 0) {
-      const pr = claw.prizes.find((p) => p.verseIdx >= 0) || claw.prizes[0];
-      revealQueue.push({ ...pr, verseIdx: i });
+      const go = () => {
+        const pr = claw.prizes.find((p) => p.verseIdx >= 0) || claw.prizes[0];
+        revealQueue.push({ ...pr, verseIdx: i });
+      };
+      // The pool may still be in flight on slow networks — wait for it so the
+      // preview reveals a verse, not just a light.
+      versesPromise ? versesPromise.then(go, go) : go();
     },
   };
   // material-variant preview: skip the flag, run the ball→object→open sequence
@@ -1305,8 +1329,14 @@ Promise.all(files.map((f) => loader.loadAsync(f))).then((gltfs) => {
   glow.scale.setScalar(Math.max(size.x, size.z) * 0.96);
   glow2.scale.setScalar(Math.max(size.x, size.z) * 0.96);
 
-  loadBar.style.width = '100%';
-  loadingEl.classList.add('done');
+  perfMark('machine-built');
+  // "Ready" means one real frame with the machine has already been drawn —
+  // ENTER never reveals a compile hitch.
+  requestAnimationFrame(() => {
+    loadBar.style.width = '100%';
+    perfMark('machine-ready');
+    loadingEl.classList.add('done');
+  });
 }).catch((err) => {
   console.error('GLB load failed:', err);
   loadingEl.firstElementChild.textContent = 'LOAD ERROR';
