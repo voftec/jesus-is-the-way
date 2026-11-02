@@ -1328,6 +1328,8 @@ let neonT = 0;
 // Adaptive quality: if fps drops, step down (SAO off → transmission off → lower dpr)
 // ?fullfx in the URL forces max quality (no auto-degrade)
 const forceFullFx = location.search.includes('fullfx');
+// ?nofx renders straight to screen: no bloom, no composer passes
+const noPostFx = new URLSearchParams(location.search).has('nofx');
 let qualityTier = 0, fpsAcc = 0, fpsN = 0, fpsTimer = 0;
 function stepDownQuality() {
   qualityTier++;
@@ -1448,12 +1450,16 @@ renderer.setAnimationLoop(() => {
     camera.position.y += (Math.random() - 0.5) * shakeAmp;
   }
   // Selective bloom: blacken non-neon, blur layer, then composite over normal render
-  if (!window.__nobloom) {
-    darkenNonBloomed();
-    bloomComposer.render();
-    restoreMaterials();
+  if (noPostFx) {
+    renderer.render(scene, camera);
+  } else {
+    if (!window.__nobloom) {
+      darkenNonBloomed();
+      bloomComposer.render();
+      restoreMaterials();
+    }
+    finalComposer.render();
   }
-  finalComposer.render();
   // fps watchdog → adaptive quality tier
   fpsTimer += dt; fpsAcc += dt; fpsN++;
   if (fpsTimer > 2.5 && fpsN > 30) {
