@@ -329,17 +329,29 @@ scene.add(ground);
 // Visible floor: not a pad — a soft darkening pool that grounds the machine and
 // lets the panorama's sparkle floor peek through near the feet before sinking
 // into darkness. No hard edge, no color plate.
+const floorTex = new THREE.TextureLoader().load('./assets/floor-terrazzo.jpg');
+floorTex.colorSpace = THREE.SRGBColorSpace;
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+floorTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 const floorMat = new THREE.ShaderMaterial({
   transparent: true,
   depthWrite: false,
+  uniforms: {
+    uMap: { value: floorTex },
+    uTiles: { value: 7.0 },
+  },
   vertexShader: `varying vec2 vUv;
     void main(){ vUv = uv; gl_Position = projectionMatrix*viewMatrix*modelMatrix*vec4(position,1.); }`,
-  fragmentShader: `varying vec2 vUv;
+  fragmentShader: `uniform sampler2D uMap;
+    uniform float uTiles;
+    varying vec2 vUv;
     void main(){
       float r = length(vUv - 0.5) * 2.0; // 0 center .. 1 edge
-      float a = (1.0 - smoothstep(0.26, 0.95, r)) * 0.86;
-      vec3 col = vec3(0.016, 0.012, 0.042);
-      gl_FragColor = vec4(col, a);
+      vec3 tex = texture2D(uMap, vUv * uTiles).rgb;
+      // the chips sink into darkness before the alpha edge arrives — no seam
+      float dim = 1.0 - smoothstep(0.0, 0.88, r) * 0.82;
+      float a = (1.0 - smoothstep(0.42, 0.97, r)) * 0.92;
+      gl_FragColor = vec4(tex * dim, a);
       #include <colorspace_fragment>
     }`,
 });
