@@ -313,15 +313,22 @@ const __mark = (n) => window.__perf.push([n, Math.round(performance.now())]);
     de: ['Willkommen', 'WÄHLE DEINE SPRACHE', 'TIPPEN ZUM STARTEN'],
     it: ['Benvenuto', 'SCEGLI LA TUA LINGUA', 'TOCCA PER ENTRARE'],
   };
-  const l = 'en';
-  const s = S[l] || S.en;
-  document.getElementById('enter-verse').textContent = s[0];
-  document.getElementById('enter-ref').textContent = s[1];
-  document.getElementById('enter-btn').textContent = s[2];
   const chips = document.querySelectorAll('#enter-langs button');
-  chips.forEach((b) => b.classList.toggle('on', b.dataset.lang === l));
-  // Taps before the engine bundle arrives still count — main.js picks this up.
-  chips.forEach((b) => b.addEventListener('click', () => { window.__pendingLang = b.dataset.lang; }));
+  const setEarlyLang = (l) => {
+    const s = S[l] || S.en;
+    window.__pendingLang = l;
+    document.getElementById('enter-verse').textContent = s[0];
+    document.getElementById('enter-ref').textContent = s[1];
+    document.getElementById('enter-btn').textContent = s[2];
+    chips.forEach((b) => b.classList.toggle('on', b.dataset.lang === l));
+  };
+  setEarlyLang('en');
+  // Taps before the engine bundle arrives update UI immediately and main.js picks this up.
+  chips.forEach((b) => b.addEventListener('click', () => setEarlyLang(b.dataset.lang)));
+  document.getElementById('enter-btn').addEventListener('click', () => {
+    window.__pendingEnter = true;
+    document.getElementById('enter-screen').classList.add('off');
+  });
   __mark('flag-text');
 })();
 // Fetch the cabinet while the bundle downloads — the flag needs nothing else.

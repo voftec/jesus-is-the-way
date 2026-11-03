@@ -151,6 +151,7 @@ function startMusic() {
   nextStepT = ctx.currentTime + 0.1;
   stepIdx = 0;
   musicTimer = setInterval(() => {
+    if (nextStepT < ctx.currentTime - 0.06) nextStepT = ctx.currentTime + 0.02;
     while (nextStepT < ctx.currentTime + 0.18) {
       const playing = musicMode === 'play';
       const step = 60 / (playing ? PLAY_BPM : ATTRACT_BPM) / 2; // 8th notes

@@ -159,9 +159,12 @@ function rebuildBloomMask() {
   _hideTargets.length = 0;
   scene.traverse((obj) => {
     if ((!obj.isMesh && !obj.isSprite && !obj.isPoints) || bloomLayer.test(obj.layers)) return;
-    // Transparent meshes/points (glass panes, blob shadow, particles) get hidden so neon
+    // Transparent meshes/points (glass panes, blob shadow, particles, reveal halves) get hidden so neon
     // strips inside the vitrine still reach the bloom buffer
-    if (obj.isPoints || (obj.material && obj.material.transparent)) _hideTargets.push(obj);
+    const isTrans = Array.isArray(obj.material)
+      ? obj.material.some((m) => m && m.transparent)
+      : Boolean(obj.material && obj.material.transparent);
+    if (obj.isPoints || isTrans) _hideTargets.push(obj);
     else _darkTargets.push(obj);
   });
 }
@@ -931,10 +934,6 @@ function setupCabinetControls(root) {
   ringGroup.add(haloInner, haloOuter);
   scene.add(ringGroup);
 
-  const btnLight = new THREE.PointLight(0xffcf26, 0, 0.16, 2.0);
-  btnLight.position.copy(btnCenterWorld).addScaledVector(_panelNormal, 0.028);
-  scene.add(btnLight);
-
   // Invisible fat touch colliders so thumb grabs are forgiving on mobile
   const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false });
   const stickCollider = new THREE.Mesh(new THREE.SphereGeometry(0.078, 12, 10), hitMat);
@@ -955,7 +954,7 @@ function setupCabinetControls(root) {
     btnCollider,
     btnHalo: haloInner,
     btnHaloOuter: haloOuter,
-    btnLight,
+    btnLight: null,
   });
   window.__deck = deckCtrl;
 }
@@ -1032,7 +1031,6 @@ function updateCabinetControls(dt) {
     deckCtrl.btnHaloOuter.material.opacity = 0.20 + pulse * 0.16;
     const s = 1 + pulse * 0.04;
     deckCtrl.btnHaloOuter.scale.setScalar(s);
-    deckCtrl.btnLight.intensity = 0;
     deckCtrl.btnMesh.material.emissive.setRGB(0, 0, 0);
     if (deckCtrl.btnBezelMesh && deckCtrl.btnBezelMesh.material.emissive) {
       deckCtrl.btnBezelMesh.material.emissive.setRGB(0.22 + pulse * 0.18, 0.15 + pulse * 0.12, 0.01);
@@ -1040,7 +1038,6 @@ function updateCabinetControls(dt) {
   } else {
     deckCtrl.btnHalo.visible = false;
     deckCtrl.btnHaloOuter.visible = false;
-    deckCtrl.btnLight.intensity = 0;
     deckCtrl.btnMesh.material.emissive.setRGB(0, 0, 0);
     if (deckCtrl.btnBezelMesh && deckCtrl.btnBezelMesh.material.emissive) {
       deckCtrl.btnBezelMesh.material.emissive.setRGB(0, 0, 0);
@@ -1066,6 +1063,58 @@ let versePool = null;          // [{ i, r, t }] ranked-by-substance pool
 let revealState = null;        // active ball→paper sequence
 const revealQueue = [];        // wins queue up; they reveal one at a time
 let giftHalvesProto = null;    // { leftGeo, rightGeo } loaded from sphereLeft.glb + sphereRight.glb
+let machineBuilt = false;
+let sceneCompiled = false;
+
+// Pre-allocated reveal capsule rig — kept in scene from boot so winning or splitting
+// the sphere allocates 0 materials/geometries/lights and triggers 0 shader recompiles.
+const revealRig = (() => {
+  const r = 0.16;
+  const fallbackGeo = new THREE.SphereGeometry(1, 28, 16, 0, Math.PI, 0, Math.PI);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xfbbf24, roughness: 0.22, metalness: 0.12, side: THREE.DoubleSide, transparent: true, opacity: 1,
+  });
+  const innerMat = new THREE.MeshStandardMaterial({
+    color: 0xffe4a3, emissive: 0xffb347, emissiveIntensity: 0.08,
+    roughness: 0.32, metalness: 0.05, side: THREE.DoubleSide, transparent: true, opacity: 1,
+  });
+  const coreGeo = new THREE.SphereGeometry(r * 0.52, 20, 16);
+  const coreMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(2.4, 1.85, 0.82),
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const grp = new THREE.Group();
+  grp.visible = false;
+  const ballRig = new THREE.Group();
+  grp.add(ballRig);
+
+  const hA = new THREE.Group();
+  const meshA = new THREE.Mesh(fallbackGeo, [mat, innerMat]);
+  meshA.scale.setScalar(r);
+  meshA.rotation.y = -Math.PI / 2;
+  meshA.frustumCulled = false;
+  hA.add(meshA);
+
+  const hB = new THREE.Group();
+  const meshB = new THREE.Mesh(fallbackGeo, [mat, innerMat]);
+  meshB.scale.setScalar(r);
+  meshB.rotation.y = Math.PI / 2;
+  meshB.frustumCulled = false;
+  hB.add(meshB);
+
+  ballRig.add(hA, hB);
+
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+  coreMesh.layers.enable(BLOOM_LAYER);
+  coreMesh.visible = false;
+  coreMesh.frustumCulled = false;
+  grp.add(coreMesh);
+
+  scene.add(grp);
+  return { r, grp, ballRig, hA, hB, meshA, meshB, coreMesh, mat, innerMat, coreMat, fallbackGeo };
+})();
 
 // Split a solidified hemisphere BufferGeometry into two material groups:
 // group 0 = outer shell + rim (rAvg >= 0.955), group 1 = concave inner wall (rAvg < 0.955),
@@ -1194,13 +1243,16 @@ if (revealStyle !== 'pergamino') document.getElementById('verse-paper')?.classLi
 document.querySelectorAll('#enter-langs button').forEach((b) => {
   b.addEventListener('click', () => { if (b.dataset.lang !== lang) loadLangPool(b.dataset.lang); });
 });
-enterUI.btn.addEventListener('click', () => {
+function enterGameNow() {
   if (entered) return;
   entered = true;
   perfMark('enter-tap');
   initAudio();
   enterUI.screen.classList.add('off');
-});
+  maybeCompileAndFinishLoading();
+}
+enterUI.btn.addEventListener('click', enterGameNow);
+if (window.__pendingEnter) enterGameNow();
 loadLangPool(lang);
 
 function shuffledDeck(n) {
@@ -1231,43 +1283,19 @@ function startVerseReveal(pr) {
       hex = o.material.color.getHex();
     }
   });
-  const r = 0.16;
-  const mat = new THREE.MeshStandardMaterial({
-    color: hex, roughness: 0.22, metalness: 0.12, side: THREE.DoubleSide, transparent: true,
-  });
-  // Inner concave wall material: subtle warm gold while closed, ignites when cracked open
-  const innerMat = new THREE.MeshStandardMaterial({
-    color: 0xffe4a3, emissive: 0xffb347, emissiveIntensity: 0.08,
-    roughness: 0.32, metalness: 0.05, side: THREE.DoubleSide, transparent: true,
-  });
-  const grp = new THREE.Group();
-  const ballRig = new THREE.Group(); // rotated as one ball before split
-  grp.add(ballRig);
-
-  // Build the two solidified concave halves directly from Diego's Blender gift sphere
-  // (sphereLeft.glb / sphereRight.glb). In raw mesh space the dome is at +Z (z in 0.005..1)
-  // and the hollow mouth is at z=0 facing -Z. Rotating the mesh by -PI/2 around Y puts the
-  // left dome at -X with its concave mouth facing +X (center); +PI/2 puts the right dome at
-  // +X with its concave mouth facing -X (center). Together at rest they form the closed ball
-  // with the real beveled seam down the middle — no mesh swap on split!
-  const fallbackGeo = new THREE.SphereGeometry(1, 28, 16, 0, Math.PI, 0, Math.PI);
-  const leftGeo = giftHalvesProto ? giftHalvesProto.leftGeo : fallbackGeo;
-  const rightGeo = giftHalvesProto ? giftHalvesProto.rightGeo : fallbackGeo;
-  const mats = giftHalvesProto ? [mat, innerMat] : mat;
-
-  const hA = new THREE.Group(); // left half pivot
-  const meshA = new THREE.Mesh(leftGeo, mats);
-  meshA.scale.setScalar(r);
-  meshA.rotation.y = -Math.PI / 2;
-  hA.add(meshA);
-
-  const hB = new THREE.Group(); // right half pivot
-  const meshB = new THREE.Mesh(rightGeo, mats);
-  meshB.scale.setScalar(r);
-  meshB.rotation.y = Math.PI / 2;
-  hB.add(meshB);
-
-  ballRig.add(hA, hB);
+  const { r, grp, ballRig, hA, hB, coreMesh, mat, innerMat, coreMat } = revealRig;
+  mat.color.setHex(hex);
+  mat.opacity = 1;
+  innerMat.opacity = 1;
+  innerMat.emissiveIntensity = 0.08;
+  coreMat.opacity = 0;
+  coreMesh.visible = false;
+  coreMesh.scale.setScalar(0.6);
+  ballRig.rotation.set(0, 0, 0);
+  hA.position.set(0, 0, 0);
+  hB.position.set(0, 0, 0);
+  hA.rotation.set(0, 0, 0);
+  hB.rotation.set(0, 0, 0);
 
   // Spawn at the actual PRIZE OUT door on the lower-left front panel (tripo_part_33),
   // pulled slightly forward in Z so the ball sits visibly in the doorway.
@@ -1280,19 +1308,18 @@ function startVerseReveal(pr) {
     grp.position.set(-0.15, 0.29, 0.42);
   }
   grp.scale.setScalar(0.5);
-  scene.add(grp);
+  grp.visible = true;
   // target: center of the screen, floating between camera and cabinet
   const dir = controls.target.clone().sub(camera.position).normalize();
   const target = camera.position.clone().add(dir.multiplyScalar(camera.position.distanceTo(controls.target) * 0.52));
   target.y += 0.1;
   revealState = {
-    t: 0, grp, ballRig, mat, innerMat, verse: v, r,
+    t: 0, grp, ballRig, mat, innerMat, coreMesh, coreMat, verse: v, r,
     from: grp.position.clone(),
     // storyboard: pop UP out of the doorway first, then travel to center
     rise: grp.position.clone().add(new THREE.Vector3(0.04, 0.28, 0.12)),
     target,
-    split: false, splitT: 0, opened: false, halves: [hA, hB], crack: null,
-    extraDisposables: giftHalvesProto ? [innerMat] : [fallbackGeo, innerMat],
+    split: false, splitT: 0, opened: false, halves: [hA, hB],
   };
   setMusicMode('attract');
   triggerWinLight();
@@ -1303,19 +1330,10 @@ function splitVerseBall(R) {
   R.split = true;
   R.splitT = R.t;
   R.ballRig.rotation.set(0, 0, 0);
-  // Warm light core inside the capsule — the Word brings light into darkness
-  const crack = new THREE.PointLight(0xffd68a, 0, 2.2, 1.6);
-  const coreGeo = new THREE.SphereGeometry(R.r * 0.52, 20, 16);
-  const coreMat = new THREE.MeshStandardMaterial({
-    color: 0xfff3c4, emissive: 0xffb347, emissiveIntensity: 0.85,
-    roughness: 0.2, transparent: true, opacity: 0.95,
-  });
-  const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-  R.grp.add(crack, coreMesh);
-  R.crack = crack;
-  R.coreMesh = coreMesh;
-  R.coreMat = coreMat;
-  R.extraDisposables.push(coreGeo, coreMat);
+  // Warm light core inside the capsule — pre-compiled on BLOOM_LAYER so 0 shader recompilation occurs
+  R.coreMesh.visible = true;
+  R.coreMesh.scale.setScalar(0.6);
+  R.coreMat.opacity = 0.95;
   sfx.chime();
 }
 
@@ -1335,9 +1353,8 @@ function closeVerseCard() {
   setTimeout(() => {
     verseUI.wrap.classList.remove('on');
     if (revealState) {
-      scene.remove(revealState.grp);
-      if (revealState.extraDisposables) revealState.extraDisposables.forEach((d) => d.dispose && d.dispose());
-      revealState.mat.dispose();
+      revealState.grp.visible = false;
+      revealState.coreMesh.visible = false;
       revealState = null;
     }
   }, 380);
@@ -1490,15 +1507,67 @@ function updateVerseReveal(dt) {
       R.coreMesh.scale.setScalar(0.6 + part * 1.35);
       R.coreMat.opacity = ck * 0.95;
     }
-    if (R.crack) R.crack.intensity = Math.sin(Math.min(1, k * 1.4) * Math.PI) * 6;
+    pitWarm.intensity = Math.max(pitWarm.intensity, Math.sin(Math.min(1, k * 1.4) * Math.PI) * 2.2);
     // the letter opens out of that burst of light while the two concave bowls drop away
     if (!R.opened && R.t - R.splitT > 0.52) {
       R.opened = true;
       openVerseCard(R.verse);
       sfx.paper();
     }
-    if (k >= 1) R.grp.visible = false;
+    if (k >= 1) {
+      R.grp.visible = false;
+      R.coreMesh.visible = false;
+    }
   }
+}
+
+function maybeCompileAndFinishLoading() {
+  if (!machineBuilt || !entered || sceneCompiled) return;
+  // Wait 2 rAFs so #enter-screen.off fades out and #loading ("LOADING…") paints first
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (sceneCompiled) return;
+      // Pre-warm every effect mesh & reveal half so 0 shaders compile during gameplay or win reveal
+      shaft.visible = true;
+      dust.visible = true;
+      confetti.visible = true;
+      for (const s of topStrips) s.visible = true;
+      revealRig.grp.visible = true;
+      revealRig.coreMesh.visible = true;
+      revealRig.grp.position.copy(controls.target);
+      revealRig.grp.scale.setScalar(0.0001);
+
+      if (noPostFx) {
+        renderer.shadowMap.needsUpdate = true;
+        renderer.render(scene, camera);
+      } else {
+        if (!window.__nobloom) {
+          darkenNonBloomed();
+          bloomComposer.render();
+          restoreMaterials();
+        }
+        renderer.shadowMap.needsUpdate = true;
+        finalComposer.render();
+      }
+
+      if (!revealState) {
+        revealRig.grp.visible = false;
+        revealRig.coreMesh.visible = false;
+      }
+      if (winLightLife <= 0) {
+        shaft.visible = false;
+        dust.visible = false;
+        for (const s of topStrips) s.visible = false;
+      }
+      if (confettiLife <= 0) confetti.visible = false;
+
+      sceneCompiled = true;
+      clock.getDelta();
+      loadBar.style.width = '100%';
+      perfMark('machine-ready');
+      loadingEl.classList.add('done');
+    });
+  });
 }
 
 const variant = location.search.includes('hq') ? 'hq' : location.search.includes('low') ? 'low' : 'rig';
@@ -1515,7 +1584,21 @@ const gltfPromise = (variant === 'rig' && window.__cabinetBuf)
             () => loader.loadAsync(files[0]).then((g) => [g]))
   : Promise.all(files.map((f) => loader.loadAsync(f)));
 
-gltfPromise.then((gltfs) => {
+const giftHalvesPromise = Promise.all([
+  loader.loadAsync('./assets/sphereLeft.glb'),
+  loader.loadAsync('./assets/sphereRight.glb'),
+]).then(([glL, glR]) => {
+  let leftGeo = null, rightGeo = null;
+  glL.scene.traverse((o) => { if (o.isMesh && !leftGeo) leftGeo = splitShellGroups(o.geometry); });
+  glR.scene.traverse((o) => { if (o.isMesh && !rightGeo) rightGeo = splitShellGroups(o.geometry); });
+  if (leftGeo && rightGeo) {
+    giftHalvesProto = { leftGeo, rightGeo };
+    revealRig.meshA.geometry = leftGeo;
+    revealRig.meshB.geometry = rightGeo;
+  }
+}).catch(() => {});
+
+Promise.all([gltfPromise, giftHalvesPromise]).then(([gltfs]) => {
   machine = new THREE.Group();
   for (const g of gltfs) machine.add(g.scene);
 
@@ -1570,7 +1653,7 @@ gltfPromise.then((gltfs) => {
   // Rig handles (world coords preserved by the Blender export + coiled spring + prize pit)
   claw = new ClawRig(machine, scene);
   setupCabinetControls(machine);
-  // everything exists now: bake the selective-bloom mask once (no per-frame traverse)
+  // everything exists now (including revealRig): bake the selective-bloom mask once
   rebuildBloomMask();
   if (versePool) claw.setVerseDeck(shuffledDeck(versePool.length));
   claw.onPrizeWon = (count, pr) => {
@@ -1581,17 +1664,6 @@ gltfPromise.then((gltfs) => {
   };
   window.claw = claw; // console/probe access
   window.__cam = camera; window.__ctrl = controls; // test probes
-
-  // Load Diego's Blender solidified gift-sphere halves (75KB each) after the cabinet
-  const giftHalvesPromise = Promise.all([
-    loader.loadAsync('./assets/sphereLeft.glb'),
-    loader.loadAsync('./assets/sphereRight.glb'),
-  ]).then(([glL, glR]) => {
-    let leftGeo = null, rightGeo = null;
-    glL.scene.traverse((o) => { if (o.isMesh && !leftGeo) leftGeo = splitShellGroups(o.geometry); });
-    glR.scene.traverse((o) => { if (o.isMesh && !rightGeo) rightGeo = splitShellGroups(o.geometry); });
-    if (leftGeo && rightGeo) giftHalvesProto = { leftGeo, rightGeo };
-  }).catch(() => {});
 
   window.__verse = {
     pool: () => versePool,
@@ -1632,14 +1704,9 @@ gltfPromise.then((gltfs) => {
   glow.scale.setScalar(Math.max(size.x, size.z) * 0.96);
   glow2.scale.setScalar(Math.max(size.x, size.z) * 0.96);
 
+  machineBuilt = true;
   perfMark('machine-built');
-  // "Ready" means one real frame with the machine has already been drawn —
-  // ENTER never reveals a compile hitch.
-  requestAnimationFrame(() => {
-    loadBar.style.width = '100%';
-    perfMark('machine-ready');
-    loadingEl.classList.add('done');
-  });
+  maybeCompileAndFinishLoading();
 }).catch((err) => {
   console.error('GLB load failed:', err);
   loadingEl.firstElementChild.textContent = 'LOAD ERROR';
@@ -1681,6 +1748,8 @@ function stepDownQuality() {
   }
 }
 renderer.setAnimationLoop(() => {
+  // Keep CPU & GPU 100% idle while the player is choosing a language on #enter-screen
+  if (!entered || !sceneCompiled) return;
   const dt = Math.min(clock.getDelta(), 0.05); // 120Hz-safe delta clamp
   neonT += dt;
   // Skybox dolly parallax — closer camera = bigger room features

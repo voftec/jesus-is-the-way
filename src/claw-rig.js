@@ -369,6 +369,14 @@ export class ClawRig {
     // heavy plushies better; low = prizes slip out between the fingers.
     this.gripStrength = 0.62;
     this._carried = null;
+    this._attachedPrize = null;
+    this._attachedLocalOffset = new THREE.Vector3();
+    this._attachedSlipTime = Infinity;
+    this._attachedElapsed = 0;
+    this._grabAttempted = false;
+    this._transStartX = 0;
+    this._transStartZ = 0;
+    this._transDuration = 2.0;
 
     this.anim = {
       smoothTX: 0.35,
@@ -1244,8 +1252,8 @@ export class ClawRig {
             if (b.pos.x + b.broadR * 0.5 > bx.xMax) { b.pos.x = bx.xMax - b.broadR * 0.5; b.vel.x = -Math.abs(b.vel.x) * b.restitution; }
             if (b.pos.z - b.broadR * 0.5 < bx.zMin) { b.pos.z = bx.zMin + b.broadR * 0.5; b.vel.z = Math.abs(b.vel.z) * b.restitution; }
             if (b.pos.z + b.broadR * 0.5 > bx.zMax) { b.pos.z = bx.zMax - b.broadR * 0.5; b.vel.z = -Math.abs(b.vel.z) * b.restitution; }
-            // Inside the hole: free fall -> prize won!
-            if (inHole && b.pos.y < -1.4 && !pr.countedWon) {
+            // Inside the chute throat: rolled down the metal ramp -> prize won!
+            if ((inHole || pr.droppingInChute) && b.pos.y < -1.62 && !pr.countedWon) {
               pr.countedWon = true;
               this.prizesWon += 1;
               this.lastWonPrize = pr.name;
@@ -1418,6 +1426,7 @@ export class ClawRig {
     this.autoDemo = false;
     if (this.phase !== 'idle') {
       // Retract and open continuously when a player interrupts the demo.
+      if (this._attachedPrize) this._releaseAttachedPrize(false);
       this.phase = 'idle';
       this.phaseTimer = 0;
       this.targetTX = this.anim.smoothTX;
@@ -1430,6 +1439,9 @@ export class ClawRig {
   triggerGrabCycle() {
     this.takeManualControl();
     if (this.phase === 'idle') {
+      if (this._attachedPrize) this._releaseAttachedPrize(false);
+      this._grabAttempted = false;
+      this._snapshotPreDropAim();
       this.phase = 'descending';
       this.phaseTimer = 0;
       this.phys.bouncesCount = 0;
@@ -1530,9 +1542,118 @@ export class ClawRig {
 
   }
 
-  // Detect a prize physically trapped inside the closed finger cage —
-  // no kinematic attach: it only rides because the colliders confine it.
+  _snapshotPreDropAim() {
+    if (!this._preDropDist) this._preDropDist = new Map();
+    this._preDropDist.clear();
+    const ax = this.anim.smoothTX;
+    const az = this.anim.smoothTZ;
+    for (const pr of this.prizes) {
+      if (pr.body) {
+        this._preDropDist.set(pr, Math.hypot(pr.body.pos.x - ax, pr.body.pos.z - az));
+      }
+    }
+  }
+
+  // Try to latch the best sphere underneath the closing 3-prong claw:
+  // - Well-centered grab (aimHoriz <= 0.19): holds securely inside the prongs all the way to the chute.
+  // - Off-center edge graze (0.19 < aimHoriz <= 0.36): lifts off the pile, wobbles, and slips out mid-way.
+  _tryAttachPrize() {
+    if (this._attachedPrize) return;
+    const cg = this.clawGroup.position;
+    const aimX = this.anim.smoothTX;
+    const aimZ = this.anim.smoothTZ;
+    let best = null;
+    let bestScore = Infinity;
+    let bestAimHoriz = Infinity;
+    for (const pr of this.prizes) {
+      const b = pr.body;
+      if (!b || pr.droppingInChute) continue;
+      const dHoriz = Math.hypot(b.pos.x - cg.x, b.pos.z - cg.z);
+      const preHoriz = this._preDropDist && this._preDropDist.has(pr)
+        ? this._preDropDist.get(pr)
+        : Math.hypot(b.pos.x - aimX, b.pos.z - aimZ);
+      const dy = cg.y - b.pos.y;
+      if (dy < 0.10 || dy > 0.58 || dHoriz > 0.38 || preHoriz > 0.36) continue;
+      const score = preHoriz - (b.pos.y - FLOOR_Y) * 0.22;
+      if (score < bestScore) {
+        bestScore = score;
+        best = pr;
+        bestAimHoriz = preHoriz;
+      }
+    }
+    if (!best) return;
+    this._attachedPrize = best;
+    best.grabbed = true;
+    best.body.asleep = false;
+    best.body.sleepT = 0;
+    best.body.vel.set(0, 0, 0);
+    this._attachedElapsed = 0;
+    if (bestAimHoriz <= 0.19) {
+      this._attachedSlipTime = Infinity;
+      this._attachedLocalOffset.set(
+        (best.body.pos.x - cg.x) * 0.18,
+        -0.265 * CLAW_SCALE,
+        (best.body.pos.z - cg.z) * 0.18
+      );
+    } else {
+      const edgeT = THREE.MathUtils.clamp((0.36 - bestAimHoriz) / 0.17, 0, 1);
+      this._attachedSlipTime = 0.65 + edgeT * 0.85;
+      this._attachedLocalOffset.set(
+        (best.body.pos.x - cg.x) * 0.55,
+        -0.33 * CLAW_SCALE,
+        (best.body.pos.z - cg.z) * 0.55
+      );
+    }
+  }
+
+  _releaseAttachedPrize(intoChute) {
+    const pr = this._attachedPrize;
+    if (!pr) return;
+    this._attachedPrize = null;
+    pr.grabbed = false;
+    const b = pr.body;
+    if (!b) return;
+    b.asleep = false;
+    b.sleepT = 0;
+    if (intoChute) {
+      pr.droppingInChute = true;
+      b.vel.set((CHUTE_BOX.holeX - b.pos.x) * 1.6, -0.9, 0.48);
+    } else {
+      b.vel.set(this.anim.trolleyVelX * 0.45, -0.55, this.anim.trolleyVelZ * 0.45);
+    }
+  }
+
+  _updateAttachedPrize(dt) {
+    const pr = this._attachedPrize;
+    if (!pr || !pr.body) return;
+    const b = pr.body;
+    if (this.phase === 'hoisting' || this.phase === 'transporting') {
+      this._attachedElapsed += dt;
+      if (this._attachedElapsed >= this._attachedSlipTime) {
+        this._releaseAttachedPrize(false);
+        return;
+      }
+    }
+    const ph = this.phys;
+    const swayX = ph.swayAngle + (ph.groundTiltX || 0);
+    const swayZ = ph.swayAngleZ + (ph.groundTiltZ || 0);
+    _euler.set(swayZ, 0, swayX);
+    _tmpA.copy(this._attachedLocalOffset);
+    if (this._attachedSlipTime < Infinity) {
+      const k = Math.min(1, this._attachedElapsed / this._attachedSlipTime);
+      _tmpA.y -= k * k * 0.11;
+      _tmpA.x += Math.sin(this.t * 18) * 0.018 * k;
+    }
+    _tmpA.applyEuler(_euler).add(this.clawGroup.position);
+    const followK = this.phase === 'grabbing' ? 15 : 42;
+    b.pos.x = THREE.MathUtils.damp(b.pos.x, _tmpA.x, followK, dt);
+    b.pos.y = THREE.MathUtils.damp(b.pos.y, _tmpA.y, followK, dt);
+    b.pos.z = THREE.MathUtils.damp(b.pos.z, _tmpA.z, followK, dt);
+    b.vel.set(0, 0, 0);
+  }
+
   _detectCarried() {
+    if (this._attachedPrize) return this._attachedPrize;
     const cgp = this.clawGroup.position;
     for (const pr of this.prizes) {
       const b = pr.body;
@@ -1561,6 +1682,8 @@ export class ClawRig {
       }
       this.phaseTimer += dt;
       if (this.phaseTimer > 2.8) {
+        this._grabAttempted = false;
+        this._snapshotPreDropAim();
         this.phase = 'descending';
         this.phaseTimer = 0;
         this.phys.bouncesCount = 0;
@@ -1572,20 +1695,28 @@ export class ClawRig {
 
       if (this.phase === 'descending') {
         // Real claw: it rests on the pile (no bounce), rope goes slack, then closes
-        if ((ph.supported && this.phaseTimer > 0.6) || this.phaseTimer > 4.5) {
+        if ((ph.supported && this.phaseTimer > 0.45) || this.phaseTimer > 4.2) {
           this.phase = 'touchdown';
           this.phaseTimer = 0;
         }
       } else if (this.phase === 'touchdown') {
-        if (this.phaseTimer > 0.75) {
+        if (this.phaseTimer > 0.48) {
           this.phase = 'grabbing';
           this.phaseTimer = 0;
           this.targetOpen = 0.14;
         }
       } else if (this.phase === 'grabbing') {
-        // The motor fights obstructions until the ring actually closes
-        // (or gives up after 2.6s like a real stalled mechanism)
-        if (anim.currentOpen < 0.3 || this.phaseTimer > 2.6) {
+        if (!this._grabAttempted && anim.currentOpen < 0.52) {
+          this._grabAttempted = true;
+          this._tryAttachPrize();
+        }
+        // Once the prongs close around the sphere (or finish closing), start hoisting
+        const closedEnough = this._attachedPrize ? anim.currentOpen < 0.28 : anim.currentOpen < 0.22;
+        if (closedEnough || this.phaseTimer > 1.35) {
+          if (!this._grabAttempted) {
+            this._grabAttempted = true;
+            this._tryAttachPrize();
+          }
           this.phase = 'hoisting';
           this.phaseTimer = 0;
           ph.groundTiltX = 0;
@@ -1593,7 +1724,7 @@ export class ClawRig {
           ph.sagX = 0;
           ph.sagZ = 0;
           this.targetDrop = DROP_REST;
-          ph.coilWaveVel += 0.9;
+          ph.coilWaveVel += 0.6;
           // Wake sleepers near the mouth so whatever got caged/pinched can move
           const cgp = this.clawGroup.position;
           for (const pr of this.prizes) {
@@ -1605,25 +1736,31 @@ export class ClawRig {
           }
         }
       } else if (this.phase === 'hoisting') {
-        if (Math.abs(anim.currentDrop - DROP_REST) < 0.14 && this.phaseTimer > 2.4) {
+        if (Math.abs(anim.currentDrop - DROP_REST) < 0.14 && this.phaseTimer > 1.55) {
           this.phase = 'transporting';
           this.phaseTimer = 0;
-          this.targetTX = CHUTE.x;
-          this.targetTZ = CHUTE.z;
+          this._transStartX = anim.smoothTX;
+          this._transStartZ = anim.smoothTZ;
+          const totalDist = Math.hypot(CHUTE.x - this._transStartX, CHUTE.z - this._transStartZ);
+          this._transDuration = Math.max(1.5, totalDist / 0.72);
         }
       } else if (this.phase === 'transporting') {
+        const u = Math.min(1, this.phaseTimer / this._transDuration);
+        const ease = 0.5 - 0.5 * Math.cos(Math.PI * u);
+        this.targetTX = THREE.MathUtils.lerp(this._transStartX, CHUTE.x, ease);
+        this.targetTZ = THREE.MathUtils.lerp(this._transStartZ, CHUTE.z, ease);
         const dist = Math.hypot(anim.smoothTX - CHUTE.x, anim.smoothTZ - CHUTE.z);
-        if (dist < 0.08 && this.phaseTimer > 1.8) {
+        if (u >= 1 && dist < 0.06 && this.phaseTimer > this._transDuration + 0.28) {
           this.phase = 'releasing';
           this.phaseTimer = 0;
           this.targetOpen = 0.9;
-          // Nothing to release manually — the prize only leaves the cage when
-          // the fingers physically open. If it falls into PRIZE OUT the hole
-          // collision counts the win; if it already slipped out mid-flight,
-          // this claw run came home empty (just like a real machine).
         }
       } else if (this.phase === 'releasing') {
+        if (this._attachedPrize && anim.currentOpen > 0.32) {
+          this._releaseAttachedPrize(true);
+        }
         if (this.phaseTimer > 1.2) {
+          if (this._attachedPrize) this._releaseAttachedPrize(true);
           // Stay parked right where the play ended instead of sliding back across the background
           this.autoDemo = false;
           this.phase = 'idle';
@@ -1642,31 +1779,34 @@ export class ClawRig {
       }
     }
 
-    // Slow, smooth trolley motion + gentle acceleration feeding the 2D pendulum
+    // Smooth trolley motion + gentle acceleration feeding the 2D pendulum
     const prevVx = anim.trolleyVelX;
     const prevVz = anim.trolleyVelZ;
-    const nextTx = THREE.MathUtils.damp(anim.smoothTX, this.targetTX, 2.2, dt);
-    const nextTz = THREE.MathUtils.damp(anim.smoothTZ, this.targetTZ, 2.2, dt);
+    const dampK = this.phase === 'transporting' ? 5.5 : 3.2;
+    const nextTx = THREE.MathUtils.damp(anim.smoothTX, this.targetTX, dampK, dt);
+    const nextTz = THREE.MathUtils.damp(anim.smoothTZ, this.targetTZ, dampK, dt);
     anim.trolleyVelX = (nextTx - anim.smoothTX) / dt;
     anim.trolleyVelZ = (nextTz - anim.smoothTZ) / dt;
-    const accX = (anim.trolleyVelX - prevVx) / dt;
-    const accZ = (anim.trolleyVelZ - prevVz) / dt;
+    const accScale = this.phase === 'transporting' ? 0.35 : 0.75;
+    const accX = ((anim.trolleyVelX - prevVx) / dt) * accScale;
+    const accZ = ((anim.trolleyVelZ - prevVz) / dt) * accScale;
     anim.smoothTX = nextTx;
     anim.smoothTZ = nextTz;
 
-    const carriedMass = this._carried ? 2.65 : 1.8;
+    const carriedMass = (this._attachedPrize || this._carried) ? 2.65 : 1.8;
     const contact = (this.phase === 'descending' || this.phase === 'touchdown' || this.phase === 'grabbing')
       ? this._clawSupport()
       : null;
     const res = stepClawBouncePhysics(ph, this.targetDrop, dt, 0.74, 52, carriedMass, accX, accZ, contact);
     this.phys = res.next;
     anim.currentDrop = res.next.drop;
-    anim.currentOpen = THREE.MathUtils.damp(anim.currentOpen, this.targetOpen, 3.2, dt);
+    const desiredOpen = (this._attachedPrize && this.targetOpen < 0.24) ? 0.24 : this.targetOpen;
+    anim.currentOpen = THREE.MathUtils.damp(anim.currentOpen, desiredOpen, 3.2, dt);
 
     // Finger stall: a prize jammed between the fingers physically blocks the
     // linkage — the motor keeps pushing but the ring can't close past it.
     // A half-closed ring pinches poorly and the prize slips more easily.
-    if (this.phase === 'grabbing' || this.phase === 'hoisting' || this.phase === 'transporting') {
+    if (!this._attachedPrize && (this.phase === 'grabbing' || this.phase === 'hoisting' || this.phase === 'transporting')) {
       const cgX = anim.smoothTX + (ph.sagX || 0);
       const cgZ = anim.smoothTZ + (ph.sagZ || 0);
       const cg = this.clawGroup.position;
@@ -1694,30 +1834,10 @@ export class ClawRig {
       if (openMin > 0.05 && anim.currentOpen < openMin + 0.05) {
         anim.currentOpen = Math.max(this.targetOpen, anim.currentOpen - dt * 0.55);
       }
-      // Finger-cam funnel: closing C-curves channel mouth prizes toward the
-      // claw axis so the seat forms under their center of mass. During hoist
-      // & transport the closed cage cone keeps a carried prize nestled in the
-      // pocket (weaker — it only steadies the seat against pendulum sway)
-      const funneling = (this.phase === 'touchdown' || this.phase === 'grabbing') && anim.currentOpen > 0.2;
-      const riding = (this.phase === 'hoisting' || this.phase === 'transporting');
-      if (funneling || riding) {
-        const cg2 = this.clawGroup.position;
-        const fMul = funneling ? 4.2 : 2.2;
-        for (const pr of this.prizes) {
-          const b = pr.body;
-          if (!b || pr.droppingInChute) continue;
-          const dx = cg2.x - b.pos.x, dz = cg2.z - b.pos.z;
-          const d = Math.hypot(dx, dz);
-          if (d < 0.55 && b.pos.y < cg2.y - 0.02 && b.pos.y > cg2.y - 0.85 && d > 1e-3) {
-            const f = fMul * (0.55 - d);
-            b.vel.x += (dx / d) * f * dt;
-            b.vel.z += (dz / d) * f * dt;
-          }
-        }
-      }
     }
 
     this._updateVisuals();
+    this._updateAttachedPrize(dt);
     this._carried = this._detectCarried();
     this.grabbedPrize = this._carried;
 
