@@ -9,9 +9,17 @@
  *
  * Usage: node tools/build-verses.mjs [poolSize]   (default 3500)
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
+import { deflateRawSync } from 'zlib';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+
+function writePackedBin(outPath, str) {
+  const raw = deflateRawSync(Buffer.from(str, 'utf8'), { level: 9 });
+  for (let i = 0; i < raw.length; i++) raw[i] ^= 0x5a;
+  writeFileSync(outPath, raw);
+  return raw.length;
+}
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const XREF = join(ROOT, '../bible-cross-references');
@@ -97,15 +105,17 @@ for (const [lang, tId] of Object.entries(TRANSLATIONS)) {
     pool.push({ i, r: refOf(i), t: t.trim() });
     if (pool.length >= POOL_SIZE) break;
   }
-  writeFileSync(join(OUT, `verses-${lang}.json`), JSON.stringify({
+  rmSync(join(OUT, `verses-${lang}.json`), { force: true });
+  const vBytes = writePackedBin(join(OUT, `verses-${lang}.bin`), JSON.stringify({
     lang, attribution: data.attribution, license: data.license, verses: pool,
   }));
 
   if (FULL_BIBLE_LANGS.has(lang)) {
+    rmSync(join(OUT, `bible-${lang}.txt`), { force: true });
     const txt = data.verses.map((t, i) => `${refOf(i)}\t${(t || '').trim()}`).join('\n');
-    writeFileSync(join(OUT, `bible-${lang}.txt`), txt);
-    console.log(`bible-${lang}.txt ${(txt.length / 1048576).toFixed(1)} MB`);
+    const bBytes = writePackedBin(join(OUT, `bible-${lang}.bin`), txt);
+    console.log(`bible-${lang}.bin ${(bBytes / 1024).toFixed(0)} KB`);
   }
-  console.log(`verses-${lang}.json ${pool.length} verses | top: ${pool[0].r} | Jer29:11 pos: ${pool.findIndex((p) => p.i === 23099)}`);
+  console.log(`verses-${lang}.bin ${(vBytes / 1024).toFixed(0)} KB (${pool.length} verses) | top: ${pool[0].r}`);
 }
 console.log('done');

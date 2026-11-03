@@ -1121,6 +1121,15 @@ function splitShellGroups(srcGeo) {
   return geo;
 }
 let bibleLines = null;         // lazy: full 31,102-verse text for KEEP READING
+let bibleLinesLang = null;
+
+async function unpackBinText(url) {
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const u8 = new Uint8Array(await res.arrayBuffer());
+  for (let i = 0; i < u8.length; i++) u8[i] ^= 0x5a;
+  return new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+}
 
 // ---------- Languages: the flag comes before everything ----------
 const I18N = {
@@ -1162,8 +1171,8 @@ function loadLangPool(l) {
   // Don't steal bandwidth from the cabinet download — the pool fetches right after it.
   const gate = (window.__cabinetBuf || Promise.resolve()).catch(() => {});
   versesPromise = gate
-    .then(() => fetch(`./assets/verses-${l}.json`))
-    .then((r) => (r.ok ? r.json() : null))
+    .then(() => unpackBinText(`./assets/verses-${l}.bin`))
+    .then((txt) => (txt ? JSON.parse(txt) : null))
     .catch(() => null);
   versesPromise.then((d) => {
     if (!d?.verses?.length || l !== lang) return;
@@ -1361,10 +1370,12 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
 async function openChapter(v) {
   if (!v) return;
-  if (!bibleLines) {
-    const bibleLang = FULL_BIBLE_LANGS.has(lang) ? lang : 'en';
-    const txt = await fetch(`./assets/bible-${bibleLang}.txt`).then((r) => r.text());
+  const bibleLang = FULL_BIBLE_LANGS.has(lang) ? lang : 'en';
+  if (!bibleLines || bibleLinesLang !== bibleLang) {
+    const txt = await unpackBinText(`./assets/bible-${bibleLang}.bin`);
+    if (!txt) return;
     bibleLines = txt.split('\n');
+    bibleLinesLang = bibleLang;
     verseUI.sheetTrans.textContent = I18N[bibleLang].trans;
   }
   const ref = bibleLines[v.i].split('\t')[0];            // "Jeremiah 29:11"
