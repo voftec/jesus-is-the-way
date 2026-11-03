@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Claw Machine</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ux: calc(100vw / 393); --uy: calc(100vh / 852); --s: 1; --top-k: 68; --row2-k: 52; --bot-k: 196;
+    --snap-top: calc(var(--top-k) * var(--uy) + env(safe-area-inset-top, 0px));
+    --snap-bot: calc(var(--bot-k) * var(--uy) + env(safe-area-inset-bottom, 0px)); }
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0a0714;
+    touch-action:none; overscroll-behavior:none; -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; font-family:Impact,'Arial Black','Helvetica Neue',sans-serif; }
+  #c { position:fixed; inset:0; width:100%; height:100%; display:block; }
+
+  /* Vignette: darkens the edges — the machine reads as a light in a dark place */
+  #vignette { position:fixed; inset:0; pointer-events:none; z-index:6;
+    background:radial-gradient(ellipse 92% 78% at 50% 44%, transparent 38%, rgba(3,2,8,.62) 100%); }
+
+  /* FX & Skybox tuning panel — collapsible, inside the open playfield band */
+  #fx-toggle, #sky-toggle { position:fixed; left:calc(10*var(--ux)); top:calc(208*var(--uy)); z-index:9;
+    height:calc(32*var(--s)); border-radius:10px;
+    background:rgba(14,10,30,.84); border:1.5px solid rgba(139,92,246,.65); color:#e9d5ff;
+    font:800 calc(11*var(--s))/1 'Helvetica Neue',Arial,sans-serif; letter-spacing:.05em;
+    padding:0 calc(9*var(--s)); cursor:pointer; box-shadow:0 0 10px rgba(139,92,246,.35); }
+  #sky-toggle { left:calc(48*var(--ux)); border-color:rgba(34,211,238,.7); color:#a5f3fc; }
+  #fx-panel { position:fixed; left:calc(10*var(--ux)); top:calc(246*var(--uy)); z-index:9;
+    width:calc(196*var(--s)); max-height:calc(330*var(--uy)); overflow-y:auto;
+    background:rgba(10,7,20,.9); border:1px solid rgba(139,92,246,.55); border-radius:14px;
+    padding:calc(10*var(--s)); display:none; font-family:'Helvetica Neue',Arial,sans-serif;
+    backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
+  #fx-panel.open { display:block; }
+  #fx-panel, #fx-panel * { touch-action:auto; }
+  .fx-sec { font-size:calc(9.5*var(--s)); font-weight:900; color:#22d3ee; letter-spacing:.1em;
+    margin:calc(2*var(--s)) 0 calc(7*var(--s)); text-transform:uppercase; }
+  .fx-row { margin-bottom:calc(8*var(--s)); }
+  .fx-row label { display:flex; justify-content:space-between; font-size:calc(9*var(--s));
+    font-weight:800; color:#c9b8ff; letter-spacing:.06em; margin-bottom:2px; text-transform:uppercase; }
+  .fx-row label span:last-child { color:#ff9de2; }
+  .fx-row input[type=range] { width:100%; height:14px; accent-color:#ff2ec4; margin:0; }
+  .fx-sep { border-top:1px solid rgba(139,92,246,.35); margin:calc(8*var(--s)) 0; }
+
+  /* Floating feedback toast inside the playfield band */
+  #toast { position:fixed; left:50%; top:calc(430*var(--uy)); transform:translateX(-50%); z-index:8;
+    font:900 calc(14*var(--s))/1 'Helvetica Neue',Arial,sans-serif; color:#fff; letter-spacing:.1em;
+    padding:calc(8*var(--s)) calc(16*var(--s)); border-radius:24px; pointer-events:none; opacity:0;
+    background:rgba(255,46,196,.9); box-shadow:0 0 20px rgba(255,46,196,.8); }
+  #toast.win { background:rgba(255,196,70,.94); box-shadow:0 0 22px rgba(255,196,70,.85); color:#2a1500; }
+  #toast.show { animation:toastpop 1.3s ease-out forwards; }
+  @keyframes toastpop {
+    0% { opacity:0; margin-top:10px; }
+    14% { opacity:1; margin-top:0; }
+    78% { opacity:1; margin-top:-4px; }
+    100% { opacity:0; margin-top:-16px; }
+  }
+
+  #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; color:#fff;
+    background:#0a0714; z-index:20; flex-direction:column; gap:12px; transition:opacity .4s;
+    font-style:italic; letter-spacing:.1em; }
+  #loading.done { opacity:0; pointer-events:none; }
+  #bar { width:180px; height:5px; background:rgba(255,255,255,.15); transform:skewX(-20deg); }
+  #bar i { display:block; height:100%; width:0; background:#ffd23f; transition:width .2s; }
+
+  /* ---- Enter screen: dark, a welcome, pick a language, tap to enter ---- */
+  #enter-screen { position:fixed; inset:0; z-index:25; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(ellipse 120% 90% at 50% 30%, #0d0a1c 0%, #05030c 70%);
+    transition:opacity .7s; }
+  #enter-screen.off { opacity:0; pointer-events:none; }
+  #enter-inner { display:flex; flex-direction:column; align-items:center; padding:0 26px;
+    max-width:min(86vw,360px); }
+  #enter-verse { font:italic 400 clamp(17px,4.8vw,20px)/1.5 Georgia,serif; color:#efe4c8;
+    text-align:center; font-size:clamp(26px,7vw,32px);
+    text-shadow:0 0 22px rgba(255,214,120,.16); }
+  #enter-ref { margin-top:10px; font:800 10px/1 'Helvetica Neue',Arial,sans-serif;
+    letter-spacing:.3em; color:#8a6a1f; text-transform:uppercase; min-height:1em; }
+  #enter-langs { display:flex; gap:8px; margin-top:34px; }
+  #enter-langs button { width:44px; height:34px; border-radius:9px; border:1px solid rgba(240,210,130,.28);
+    background:transparent; color:#a89468; cursor:pointer;
+    font:800 11px/1 'Helvetica Neue',Arial,sans-serif; letter-spacing:.08em; transition:all .2s; }
+  #enter-langs button.on { border-color:rgba(255,214,120,.85); color:#f3d27a;
+    background:rgba(255,214,120,.08); box-shadow:0 0 12px rgba(255,214,120,.22); }
+  #enter-btn { margin-top:22px; height:50px; padding:0 38px; border-radius:14px; border:0; cursor:pointer;
+    background:linear-gradient(180deg,#ffd76a,#e89a1f); color:#3a2400;
+    font:900 14px/1 'Helvetica Neue',Arial,sans-serif; letter-spacing:.16em;
+    box-shadow:0 6px 24px rgba(232,154,31,.35), 0 1px 0 rgba(255,255,255,.4) inset; }
+  #enter-btn:active { transform:translateY(1px); }
+
+  /* ---- Verse reveal: folded paper that opens over a dimmed, quiet scene ---- */
+  #verse-reveal { position:fixed; inset:0; z-index:12; display:none; align-items:center; justify-content:center;
+    padding:var(--snap-top, 0px) 0 calc(var(--snap-bot, 0px) * 0.55 + 6vh); box-sizing:border-box;
+    background:rgba(6,4,14,0); transition:background .6s; }
+  #verse-reveal.on { display:flex; background:rgba(6,4,14,.55); }
+  #verse-paper { width:min(78vw, 340px); transform:scaleY(0.03) scale(.5) translateY(0); opacity:0;
+    transform-origin:center 50%; transition:transform .6s cubic-bezier(.22,1.35,.36,1), opacity .3s;
+    /* aged parchment: sunlit center, fire-darkened edges, paper grain */
+    background:
+      radial-gradient(ellipse 130% 95% at 50% 40%, rgba(0,0,0,0) 52%, rgba(122,82,22,.30) 100%),
+      radial-gradient(ellipse 55% 38% at 28% 22%, rgba(168,112,40,.10), transparent 70%),
+      radial-gradient(ellipse 48% 32% at 76% 68%, rgba(150,98,34,.09), transparent 70%),
+      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer></filter><rect width="140" height="140" filter="url(%23n)"/></svg>'),
+      linear-gradient(178deg,#f7eecd 0%,#efe0b4 52%,#e2cb92 100%);
+    border-radius:4px; padding:32px 26px 24px; position:relative;
+    box-shadow:0 18px 60px rgba(0,0,0,.55), 0 1px 0 rgba(255,252,240,.35) inset,
+      0 0 0 1px rgba(140,98,38,.22) inset,
+      0 -20px 36px rgba(118,80,20,.18) inset, 0 16px 32px rgba(255,244,208,.22) inset;
+    filter:drop-shadow(0 0 22px rgba(255,214,120,.18)); }
+  #verse-reveal.open #verse-paper { transform:scaleY(1) scale(1) translateY(0); opacity:1;
+    animation:wordGlow 2.4s ease-out .2s both; }
+  /* The Word is the light — the letter blooms a warm halo as it opens, then keeps a soft glow */
+  @keyframes wordGlow {
+    0%   { filter:drop-shadow(0 0 8px rgba(255,214,120,.06)); }
+    38%  { filter:drop-shadow(0 0 48px rgba(255,230,150,.6)); }
+    100% { filter:drop-shadow(0 0 24px rgba(255,214,120,.22)); }
+  }
+  /* wooden rollers, top and bottom — the paper unrolls between them */
+  #verse-paper::before, #verse-paper::after { content:''; position:absolute; left:-7px; right:-7px;
+    height:15px; border-radius:8px; pointer-events:none;
+    background:linear-gradient(180deg,#8a5a24 0%,#c08a45 34%,#8f5f26 58%,#54340f 100%);
+    box-shadow:0 2px 7px rgba(0,0,0,.5), 0 1px 0 rgba(255,222,160,.4) inset, 0 -1px 0 rgba(40,24,6,.5) inset; }
+  #verse-paper::before { top:-8px; }
+  #verse-paper::after { bottom:-8px;
+    background:linear-gradient(180deg,#5f3d15 0%,#8f5f26 40%,#6a4217 62%,#3a2409 100%); }
+
+  /* ===== reveal material variants — ?reveal=carta|tabla|papiro|codice|ostracon|invitacion ===== */
+
+  /* CARTA — a folded letter, wax seal breaks open */
+  #verse-paper.reveal-carta { border-radius:6px;
+    background:linear-gradient(172deg,#f4ead2 0%,#ecdcb8 55%,#e0cb9e 100%);
+    transform:scaleY(.34) scale(.6) translateY(0); }
+  #verse-reveal.open #verse-paper.reveal-carta { transform:scaleY(1) scale(1) translateY(0); }
+  #verse-paper.reveal-carta::before { content:''; top:50%; bottom:auto; left:50%; right:auto;
+    width:34px; height:34px; margin:-17px 0 0 -17px; border-radius:50%;
+    background:radial-gradient(circle at 38% 32%, #c94f38, #8e2517 62%, #671407);
+    box-shadow:0 2px 8px rgba(0,0,0,.45), 0 0 0 3px rgba(255,200,170,.14) inset;
+    transition:opacity .35s .1s, transform .5s; }
+  #verse-paper.reveal-carta::after { content:''; top:0; bottom:auto; left:0; right:0; height:46%;
+    border-radius:6px 6px 0 0; background:linear-gradient(180deg,rgba(120,90,40,.16),transparent);
+    clip-path:polygon(0 0,100% 0,50% 100%); transition:opacity .3s; }
+  #verse-reveal.open #verse-paper.reveal-carta::before { opacity:0; transform:scale(1.3) rotate(12deg); }
+  #verse-reveal.open #verse-paper.reveal-carta::after { opacity:0; }
+
+  /* TABLA — stone tablet, carved Word; emerges heavy, does not unfold */
+  #verse-paper.reveal-tabla { border-radius:46% 46% 8px 8px / 20% 20% 8px 8px;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 28%, rgba(255,255,255,.10), transparent 60%),
+      radial-gradient(ellipse 140% 100% at 50% 100%, rgba(0,0,0,.34), transparent 62%),
+      linear-gradient(178deg,#8f94a3 0%,#737884 55%,#565b66 100%);
+    transform:scale(.4) rotate(-10deg) translateY(50px);
+    box-shadow:0 22px 60px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.28) inset,
+      0 2px 0 rgba(255,255,255,.14) inset, 0 -16px 30px rgba(0,0,0,.22) inset; }
+  #verse-paper.reveal-tabla::before, #verse-paper.reveal-tabla::after { display:none; }
+  #verse-reveal.open #verse-paper.reveal-tabla { transform:scale(1) rotate(0) translateY(0); }
+  #verse-paper.reveal-tabla #verse-text { color:#26262e; font-style:normal; font-weight:600;
+    text-shadow:0 -1px 1px rgba(0,0,0,.55), 0 1px 1px rgba(255,255,255,.16); }
+  #verse-paper.reveal-tabla #verse-ref { color:#3a3428; }
+
+  /* PAPIRO — raw fibrous papyrus sheet, unrolls like the scroll */
+  #verse-paper.reveal-papiro { border-radius:3px 9px 4px 11px/7px 4px 10px 6px;
+    background:
+      repeating-linear-gradient(0deg, rgba(150,105,45,.08) 0 2px, transparent 2px 5px),
+      repeating-linear-gradient(90deg, rgba(150,105,45,.08) 0 2px, transparent 2px 5px),
+      radial-gradient(ellipse 120% 90% at 50% 42%, #e9d6a1 0%, #d9be7e 68%, #c5a358 100%);
+    box-shadow:0 18px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(140,98,38,.25) inset,
+      0 -20px 36px rgba(118,80,20,.2) inset; }
+  #verse-paper.reveal-papiro::before, #verse-paper.reveal-papiro::after { display:none; }
+  #verse-paper.reveal-papiro #verse-text { color:#4a3010; }
+
+  /* CODICE — a little codex, opens around its spine like a book */
+  #verse-paper.reveal-codice { border-radius:3px 10px 10px 3px; padding-left:34px;
+    transform:perspective(1100px) rotateY(-76deg) scale(.6) translateY(40px);
+    transform-origin:left center;
+    background:linear-gradient(90deg,#5e3517 0 20px, transparent 20px),
+      linear-gradient(178deg,#f8f1dc 0%,#efe1ba 60%,#e4d09c 100%);
+    box-shadow:0 18px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(140,98,38,.2) inset; }
+  #verse-paper.reveal-codice::before { content:''; top:0; bottom:0; left:0; right:auto;
+    width:20px; height:auto; border-radius:3px 0 0 3px; margin:0;
+    background:linear-gradient(90deg,#4a2a10,#6b3d1e 55%,#54300f);
+    box-shadow:1px 0 0 rgba(255,214,120,.3), inset -2px 0 4px rgba(0,0,0,.4); }
+  #verse-paper.reveal-codice::after { content:''; top:5%; bottom:5%; left:auto; right:2px;
+    width:4px; height:auto; border-radius:2px; margin:0;
+    background:repeating-linear-gradient(180deg,#d9cba2 0 2px,#b8a87e 2px 3px); }
+  #verse-reveal.open #verse-paper.reveal-codice { transform:perspective(1100px) rotateY(0) scale(1) translateY(0); }
+
+  /* OSTRACON — a pottery shard, humble broken clay with painted Word */
+  #verse-paper.reveal-ostracon { border-radius:0;
+    clip-path:polygon(7% 14%, 36% 3%, 69% 8%, 95% 26%, 88% 60%, 96% 87%, 57% 99%, 20% 91%, 2% 68%);
+    background:
+      radial-gradient(circle at 42% 32%, #cd9463 0%, #b07243 58%, #8d532c 100%);
+    transform:scale(.42) rotate(-16deg) translateY(50px);
+    box-shadow:none; }
+  #verse-paper.reveal-ostracon::before, #verse-paper.reveal-ostracon::after { display:none; }
+  #verse-reveal.open #verse-paper.reveal-ostracon { transform:scale(1) rotate(-2deg) translateY(0); }
+  #verse-paper.reveal-ostracon #verse-text { color:#3a2210; font-style:normal; }
+  #verse-paper.reveal-ostracon #verse-ref { color:#5c3a18; }
+
+  /* INVITACION — a formal invitation card, tips open upward */
+  #verse-paper.reveal-invitacion { border-radius:3px;
+    background:linear-gradient(178deg,#faf4e2 0%,#f3e8c9 60%,#eadcae 100%);
+    transform:perspective(1100px) rotateX(-74deg) scale(.62) translateY(40px);
+    transform-origin:center top;
+    box-shadow:0 18px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(190,150,60,.75) inset,
+      0 0 0 7px #f7efdb inset, 0 0 0 8px rgba(190,150,60,.5) inset; }
+  #verse-paper.reveal-invitacion::before { display:none; }
+  #verse-paper.reveal-invitacion::after { content:'✦'; top:8px; bottom:auto; left:0; right:0;
+    height:auto; border-radius:0; margin:0; background:none; box-shadow:none;
+    text-align:center; font-size:12px; color:rgba(160,120,45,.8); letter-spacing:.4em; }
+  #verse-reveal.open #verse-paper.reveal-invitacion { transform:perspective(1100px) rotateX(0) scale(1) translateY(0); }
+  #verse-text { font-family:Georgia,'Times New Roman',serif; font-size:clamp(17px,4.6vw,21px); line-height:1.42;
+    color:#3d2c12; text-align:center; font-style:italic; opacity:0; transition:opacity .45s .25s;
+    text-shadow:0 1px 0 rgba(255,248,224,.4); }
+  #verse-ref { margin-top:14px; text-align:center; font:800 11px/1 'Helvetica Neue',Arial,sans-serif;
+    letter-spacing:.24em; color:#7c5c1a; text-transform:uppercase; opacity:0; transition:opacity .45s .35s; }
+  #verse-reveal.open #verse-text, #verse-reveal.open #verse-ref { opacity:1; }
+  #verse-actions { display:flex; gap:10px; margin-top:20px; opacity:0; transition:opacity .4s .5s; }
+  #verse-reveal.open #verse-actions { opacity:1; }
+  .vb { flex:1; height:44px; border-radius:12px; border:0; cursor:pointer;
+    font:900 13px/1 'Helvetica Neue',Arial,sans-serif; letter-spacing:.12em; }
+  #verse-share { background:linear-gradient(180deg,#ffd76a,#f0a92e); color:#3a2400;
+    box-shadow:0 4px 14px rgba(240,169,46,.45), 0 1px 0 rgba(255,255,255,.5) inset; }
+  #verse-share:active { transform:translateY(1px); }
+  #verse-read { background:transparent; color:#7a5f22; border:1.5px solid rgba(122,95,34,.5); }
+  #verse-close { position:absolute; top:6px; right:10px; background:none; border:0; cursor:pointer;
+    font:400 22px/1 Georgia,serif; color:#a08a5c; padding:6px; }
+
+  /* ---- Chapter sheet: keep reading the whole chapter ---- */
+  #chapter-sheet { position:fixed; inset:0; z-index:13; display:none; flex-direction:column;
+    background:rgba(8,6,16,.94); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+  #chapter-sheet.on { display:flex; }
+  #chapter-head { position:relative; z-index:2; padding:calc(var(--snap-top) + 10px) 18px 24px;
+    margin-bottom:-20px; text-align:center; pointer-events:none;
+    background:linear-gradient(180deg, rgba(8,6,16,.98) 25%, rgba(8,6,16,0)); }
+  #chapter-head::after { content:''; display:block; width:64px; height:1px; margin:10px auto 0;
+    background:linear-gradient(90deg, transparent, rgba(255,214,120,.45), transparent); }
+  #chapter-title { font:900 15px/1 'Helvetica Neue',Arial,sans-serif; color:#f3d27a; letter-spacing:.18em; }
+  #chapter-body { flex:1; overflow-y:auto; padding:8px 20px calc(150 * var(--uy) + env(safe-area-inset-bottom, 0px));
+    -webkit-overflow-scrolling:touch; touch-action:pan-y; font-family:Georgia,serif;
+    scrollbar-width:thin; scrollbar-color:rgba(255,214,120,.22) transparent; }
+  #chapter-body::-webkit-scrollbar { width:5px; }
+  #chapter-body::-webkit-scrollbar-track { background:transparent; }
+  #chapter-body::-webkit-scrollbar-thumb { background:rgba(255,214,120,.2); border-radius:3px; }
+  #chapter-body::-webkit-scrollbar-thumb:hover { background:rgba(255,214,120,.38); }
+  .ch-verse { padding:9px 10px; border-radius:8px; font-size:15.5px; line-height:1.55; color:#d8cfb8;
+    transition:filter .55s ease, opacity .55s ease, transform .55s ease; }
+  .ch-verse .vn { font:800 10px/1 'Helvetica Neue',Arial,sans-serif; color:#8a6a1f;
+    vertical-align:super; margin-right:5px; letter-spacing:.05em; }
+  .ch-verse.won { background:rgba(255,214,120,.12); color:#f7ecd0;
+    box-shadow:inset 0 0 0 1px rgba(255,214,120,.35); }
+  /* Progressive revelation: the rest of the chapter waits veiled until you scroll to it */
+  .ch-verse.veiled { filter:blur(3.2px); opacity:.48; transform:translateY(2px); }
+  /* Gradient foot: verses glide beneath the back button into darkness + blur */
+  #chapter-foot { position:fixed; left:0; right:0; bottom:0; z-index:14; pointer-events:none;
+    display:flex; justify-content:center;
+    padding:48px 0 calc(92 * var(--uy) + env(safe-area-inset-bottom, 0px));
+    background:linear-gradient(180deg, rgba(8,6,16,0) 0%, rgba(8,6,16,.52) 42%, rgba(8,6,16,.92) 82%, rgba(8,6,16,.98) 100%); }
+  /* Outside Snapchat there is no bottom chrome — the button rests in the dark zone */
+  body.no-snap #chapter-body { padding-bottom:100px; }
+  body.no-snap #chapter-foot { padding:48px 0 20px; }
+  #chapter-back { width:min(70vw,280px); height:46px; border-radius:14px; border:0; pointer-events:auto;
+    background:linear-gradient(180deg,#ffd76a,#f0a92e); color:#3a2400; cursor:pointer;
+    font:900 13px/1 'Helvetica Neue',Arial,sans-serif; letter-spacing:.14em;
+    box-shadow:0 4px 16px rgba(0,0,0,.5); }
+  #chapter-sheet:not(.on) #chapter-foot { display:none; }
+</style>
+<script src="./snap-ui-sync.js"></script>
+<script src="./snap-api.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="vignette"></div>
+<button id="fx-toggle" aria-label="FX & Skybox settings" style="display:none">⚙</button>
+<div id="fx-panel"></div>
+<div id="toast"></div>
+<div id="verse-reveal">
+  <div id="verse-paper" role="dialog" aria-label="Verse">
+    <button id="verse-close" aria-label="Close">×</button>
+    <div id="verse-text"></div>
+    <div id="verse-ref"></div>
+    <div id="verse-actions">
+      <button id="verse-read" class="vb">KEEP READING</button>
+      <button id="verse-share" class="vb">SHARE IT</button>
+    </div>
+  </div>
+</div>
+<div id="chapter-sheet">
+  <div id="chapter-head">
+    <div id="chapter-title"></div>
+  </div>
+  <div id="chapter-body"></div>
+  <div id="chapter-foot"><button id="chapter-back">BACK TO THE MACHINE</button></div>
+</div>
+<div id="loading"><div>LOADING…</div><div id="bar"><i></i></div></div>
+<div id="enter-screen">
+  <div id="enter-inner">
+    <div id="enter-verse"></div>
+    <div id="enter-ref"></div>
+    <div id="enter-langs">
+      <button data-lang="en">EN</button><button data-lang="es">ES</button><button data-lang="pt">PT</button><button data-lang="de">DE</button><button data-lang="it">IT</button>
+    </div>
+    <button id="enter-btn">TAP TO ENTER</button>
+  </div>
+</div>
+<script>
+// Instant flag + early cabinet fetch + perf marks — all before the engine bundle arrives.
+window.__perf = [['boot', Math.round(performance.now())]];
+const __mark = (n) => window.__perf.push([n, Math.round(performance.now())]);
+(() => {
+  const S = {
+    en: ['Welcome', 'CHOOSE YOUR LANGUAGE', 'TAP TO ENTER'],
+    es: ['Bienvenido', 'ELIGE TU IDIOMA', 'TOCA PARA ENTRAR'],
+    pt: ['Bem-vindo', 'ESCOLHA SEU IDIOMA', 'TOQUE PARA ENTRAR'],
+    de: ['Willkommen', 'WÄHLE DEINE SPRACHE', 'TIPPEN ZUM STARTEN'],
+    it: ['Benvenuto', 'SCEGLI LA TUA LINGUA', 'TOCCA PER ENTRARE'],
+  };
+  const chips = document.querySelectorAll('#enter-langs button');
+  const setEarlyLang = (l) => {
+    const s = S[l] || S.en;
+    window.__pendingLang = l;
+    document.getElementById('enter-verse').textContent = s[0];
+    document.getElementById('enter-ref').textContent = s[1];
+    document.getElementById('enter-btn').textContent = s[2];
+    chips.forEach((b) => b.classList.toggle('on', b.dataset.lang === l));
+  };
+  setEarlyLang('en');
+  // Taps before the engine bundle arrives update UI immediately and main.js picks this up.
+  chips.forEach((b) => b.addEventListener('click', () => setEarlyLang(b.dataset.lang)));
+  document.getElementById('enter-btn').addEventListener('click', () => {
+    window.__pendingEnter = true;
+    document.getElementById('enter-screen').classList.add('off');
+  });
+  __mark('flag-text');
+})();
+// Fetch the cabinet while the bundle downloads — the flag needs nothing else.
+const __barEl = document.querySelector('#bar i');
+window.__cabinetBuf = fetch('./assets/cabinet.min.glb').then(async (r) => {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.body) return r.arrayBuffer();
+  const total = +r.headers.get('content-length') || 2600000;
+  const rd = r.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await rd.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    if (__barEl) __barEl.style.width = `${Math.min(80, (got / total) * 80).toFixed(1)}%`;
+  }
+  const buf = new Uint8Array(got);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.length; }
+  __mark('glb-fetched');
+  return buf.buffer;
+});
+</script>
+<script type="module" src="./bundle.js"></script>
+</body>
+</html>
