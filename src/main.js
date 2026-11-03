@@ -1177,11 +1177,6 @@ function loadLangPool(l) {
   versesPromise.then((d) => {
     if (!d?.verses?.length || l !== lang) return;
     versePool = d.verses;
-    // A verse also waits on the loading screen — the Word before the game
-    const lv = document.getElementById('load-verse');
-    const v0 = versePool[(Math.random() * versePool.length) | 0];
-    lv.textContent = `“${v0.t}” — ${v0.r}`;
-    lv.classList.add('on');
     if (claw) claw.setVerseDeck(shuffledDeck(versePool.length));
   });
 }
