@@ -159,7 +159,11 @@ function rebuildBloomMask() {
   _hideTargets.length = 0;
   scene.traverse((obj) => {
     if ((!obj.isMesh && !obj.isSprite && !obj.isPoints) || bloomLayer.test(obj.layers)) return;
-    // Transparent meshes/points (glass panes, blob shadow, particles, reveal halves) get hidden so neon
+    if (obj === revealRig.meshA || obj === revealRig.meshB) {
+      _darkTargets.push(obj);
+      return;
+    }
+    // Transparent meshes/points (glass panes, blob shadow, particles) get hidden so neon
     // strips inside the vitrine still reach the bloom buffer
     const isTrans = Array.isArray(obj.material)
       ? obj.material.some((m) => m && m.transparent)
@@ -662,8 +666,20 @@ function hitDeckTarget(clientX, clientY) {
   return null;
 }
 
+function isRevealOrChuteBusy() {
+  if (revealState || revealQueue.length) return true;
+  if (verseUI.wrap && verseUI.wrap.classList.contains('on')) return true;
+  if (verseUI.sheet && verseUI.sheet.classList.contains('on')) return true;
+  if (claw && claw.prizes) {
+    for (let i = 0; i < claw.prizes.length; i++) {
+      if (claw.prizes[i].droppingInChute) return true;
+    }
+  }
+  return false;
+}
+
 function triggerPhysicalButton() {
-  if (!claw) return;
+  if (!claw || isRevealOrChuteBusy()) return;
   sfx.press();
   deckCtrl.btnVel = -3.8;
   deckCtrl.btnDepress = Math.max(deckCtrl.btnDepress, 0.72);
@@ -671,6 +687,7 @@ function triggerPhysicalButton() {
 }
 
 addEventListener('keydown', (e) => {
+  if (isRevealOrChuteBusy()) return;
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS'].includes(e.code)) {
     keys.add(e.code);
     if (claw) claw.takeManualControl();
@@ -687,7 +704,7 @@ addEventListener('touchend', () => prewarmAudio(), { capture: true });
 addEventListener('keydown', () => prewarmAudio(), { capture: true });
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (!claw || !deckCtrl.stickPivot) return;
+  if (!claw || !deckCtrl.stickPivot || isRevealOrChuteBusy()) return;
   const hit = hitDeckTarget(e.clientX, e.clientY);
   if (!hit) return;
   e.stopPropagation();
@@ -995,10 +1012,12 @@ function updateCabinetControls(dt) {
 
   const maxAngle = 0.42;
   deckCtrl.stickPivot.rotation.set(deckCtrl.stickZ * maxAngle, 0, -deckCtrl.stickX * maxAngle);
+  const busyReveal = isRevealOrChuteBusy();
+  const canPress = claw.phase === 'idle' && !busyReveal;
   if (deckCtrl.stickMesh.material && deckCtrl.stickMesh.material.emissive) {
-    const tiltGlow = Math.min(1, Math.hypot(deckCtrl.stickX, deckCtrl.stickZ));
+    const tiltGlow = busyReveal ? 0 : Math.min(1, Math.hypot(deckCtrl.stickX, deckCtrl.stickZ));
     // Invite the thumb without a word: the ball-top breathes a faint gold ember while the claw waits
-    const idle = (claw && claw.phase === 'idle' && !deckCtrl.draggingStick)
+    const idle = (canPress && !deckCtrl.draggingStick)
       ? (0.5 + 0.5 * Math.sin(neonT * 1.6)) * 0.09 : 0;
     deckCtrl.stickMesh.material.emissive.setRGB(0.32 * tiltGlow + idle, 0.05 * tiltGlow + idle * 0.72, 0.14 * tiltGlow + idle * 0.10);
   }
@@ -1006,12 +1025,11 @@ function updateCabinetControls(dt) {
   // Drive gantry continuously while player tilts the 3D stick or holds keys
   const driveX = deckCtrl.draggingStick ? THREE.MathUtils.clamp(deckCtrl.stickX, -1, 1) : keyX;
   const driveZ = deckCtrl.draggingStick ? THREE.MathUtils.clamp(deckCtrl.stickZ, -1, 1) : keyZ;
-  if ((Math.abs(driveX) > 0.04 || Math.abs(driveZ) > 0.04) && claw.phase === 'idle') {
+  if (!busyReveal && (Math.abs(driveX) > 0.04 || Math.abs(driveZ) > 0.04) && claw.phase === 'idle') {
     claw.nudgeGantry(driveX * 1.18 * dt, driveZ * 1.18 * dt);
   }
 
   // Button spring & yellow readiness highlight around tripo_part_61
-  const canPress = claw.phase === 'idle';
   const targetDepress = deckCtrl.pressingBtn || (claw.phase === 'descending' && claw.phaseTimer < 0.25) ? 1 : 0;
   deckCtrl.btnVel += (targetDepress - deckCtrl.btnDepress) * 210 * dt;
   deckCtrl.btnVel *= Math.exp(-18 * dt);
@@ -1094,6 +1112,7 @@ const revealRig = (() => {
   meshA.scale.setScalar(r);
   meshA.rotation.y = -Math.PI / 2;
   meshA.frustumCulled = false;
+  meshA.renderOrder = 6;
   hA.add(meshA);
 
   const hB = new THREE.Group();
@@ -1101,6 +1120,7 @@ const revealRig = (() => {
   meshB.scale.setScalar(r);
   meshB.rotation.y = Math.PI / 2;
   meshB.frustumCulled = false;
+  meshB.renderOrder = 6;
   hB.add(meshB);
 
   ballRig.add(hA, hB);

@@ -374,6 +374,11 @@ export class ClawRig {
     this._attachedSlipTime = Infinity;
     this._attachedElapsed = 0;
     this._grabAttempted = false;
+    this._grabAttempts = 0;
+    this._slipsSinceWin = 0;
+    this._wonThisCycle = false;
+    this._postSlipTimer = 0;
+    this.forceGripOutcome = null; // 'win' | 'slip' | null
     this._transStartX = 0;
     this._transStartZ = 0;
     this._transDuration = 2.0;
@@ -1032,9 +1037,9 @@ export class ClawRig {
     const swayZ = this.phys.swayAngleZ + (this.phys.groundTiltZ || 0);
     _euler.set(swayZ, 0, swayX);
     const cp = this.clawGroup.position;
-    // Central bell head
-    out[0].pos.set(0, -0.02 * CLAW_SCALE, 0).applyEuler(_euler).add(cp);
-    out[0].r = 0.13 * CLAW_SCALE;
+    // Central bell/collar blocker seated lower so a second ball can never enter the upper strut cavity
+    out[0].pos.set(0, -0.115 * CLAW_SCALE, 0).applyEuler(_euler).add(cp);
+    out[0].r = 0.14 * CLAW_SCALE;
     const fp = -0.18 + openRatio * 0.72;
     const cosF = Math.cos(fp), sinF = Math.sin(fp);
     const NODE_T = [0.30, 0.55, 0.78, 0.97];
@@ -1099,11 +1104,10 @@ export class ClawRig {
     // BELL bottoms out on a prize. Contact = bell contact, not tip contact.
     const supportY = Math.max(centerY, tips[0], tips[1], tips[2]);
     const clawY0 = TOP_CARRIAGE_Y - CLAW_HANG;
-    const bellContact = clawY0 - 0.198 - centerY;             // bell bottom sphere hits
-    const tipFloorLimit = clawY0 - (FLOOR_Y - 0.08 - tipY);    // tips may dig ~0.08 under
-    // While closing, the winch keeps pressing down: the fingers burrow UNDER
-    // the prize and scoop it (real motor-down-while-closing behavior)
-    const digBoost = this.phase === 'grabbing' ? 0.14 : 0;
+    const bellContact = clawY0 - 0.255 - centerY;             // stop so only 1 top sphere enters the 3-prong basket
+    const tipFloorLimit = clawY0 - (FLOOR_Y - 0.06 - tipY);    // tips may dig ~0.06 under
+    // Gentle scoop on close without plunging into the second layer of spheres below
+    const digBoost = this.phase === 'grabbing' ? 0.04 : 0;
     const drop = Math.min(DROP_MAX, Math.min(bellContact, tipFloorLimit) + digBoost);
     const mean = (tips[0] + tips[1] + tips[2]) / 3;
     let tiltX = 0, tiltZ = 0;
@@ -1156,12 +1160,12 @@ export class ClawRig {
         // Won & falling inside the chute still simulates (falls into bin)
         const inHole = pr.droppingInChute && Math.hypot(b.pos.x - CHUTE_BOX.holeX, b.pos.z - CHUTE_BOX.holeZ) < CHUTE_BOX.holeR;
         const bx0 = CHUTE_BOX;
-        // Only a prize that enters the chute opening from ABOVE the rim
-        // (dropped by the claw or knocked over the top edge) enters the chute
-        if (!pr.droppingInChute &&
-            b.pos.x > bx0.xMin + 0.08 && b.pos.x < bx0.xMax - 0.08 &&
-            b.pos.z > bx0.zMin + 0.08 && b.pos.z < bx0.zMax - 0.08 &&
-            b.pos.y >= bx0.topY - 0.16 && b.vel.y <= 0) {
+        // Only a prize deliberately released into the chute by the claw (or falling from well above the rim
+        // without having slipped out) enters the chute
+        if (!pr.droppingInChute && !pr.slippedOut &&
+            b.pos.x > bx0.xMin + 0.10 && b.pos.x < bx0.xMax - 0.10 &&
+            b.pos.z > bx0.zMin + 0.10 && b.pos.z < bx0.zMax - 0.10 &&
+            b.pos.y >= bx0.topY + 0.06 && b.vel.y <= 0) {
           pr.droppingInChute = true;
         }
         b.vel.y += PHYS_G * h;
@@ -1171,9 +1175,7 @@ export class ClawRig {
         // Floor: pit floor everywhere outside the chute; inside the chute, balls land on the
         // inclined stainless-steel ramp and roll forward (+Z) into the front throat (z > 1.04).
         const minSphereY = b.pos.y - Math.max(...b.spheres.map(sp => sp.r)) * 0.8;
-        const inChuteFootprint = b.pos.x > bx0.xMin && b.pos.x < bx0.xMax && b.pos.z > bx0.zMin && b.pos.z < bx0.zMax;
-        if (pr.droppingInChute || inChuteFootprint) {
-          pr.droppingInChute = true;
+        if (pr.droppingInChute) {
           // Ramp surface height: slopes from y = -1.38 at z = -0.12 down to y = -2.00 at z = 0.98
           const rampT = Math.max(0, Math.min(1, (b.pos.z - (-0.12)) / 1.10));
           const rampY = b.pos.z < 0.98 ? (-1.38 - rampT * 0.62) : (-2.00 - (b.pos.z - 0.98) * 2.4);
@@ -1185,6 +1187,7 @@ export class ClawRig {
             b.vel.x += (bx0.holeX - b.pos.x) * 7.0 * h;
           }
         } else if (!inHole && minSphereY < FLOOR_Y) {
+          pr.slippedOut = false;
           b.contacted = true;
           b.pos.y += FLOOR_Y - minSphereY;
           if (b.vel.y < 0) {
@@ -1255,9 +1258,13 @@ export class ClawRig {
             // Inside the chute throat: rolled down the metal ramp -> prize won!
             if ((inHole || pr.droppingInChute) && b.pos.y < -1.62 && !pr.countedWon) {
               pr.countedWon = true;
-              this.prizesWon += 1;
-              this.lastWonPrize = pr.name;
-              if (this.onPrizeWon) this.onPrizeWon(this.prizesWon, pr);
+              if (!this._wonThisCycle) {
+                this._wonThisCycle = true;
+                this._slipsSinceWin = 0;
+                this.prizesWon += 1;
+                this.lastWonPrize = pr.name;
+                if (this.onPrizeWon) this.onPrizeWon(this.prizesWon, pr);
+              }
             }
           }
         }
@@ -1267,6 +1274,7 @@ export class ClawRig {
           pr.droppingInChute = false;
           pr.countedWon = false;
           pr.grabbed = false;
+          pr.slippedOut = false;
           pr.verseIdx = this._dealVerseIdx();
           b.vel.set(0, 0, 0);
           b.angVel.set(0, 0, 0);
@@ -1278,19 +1286,26 @@ export class ClawRig {
       }
 
       // Prize <-> prize collisions (sphere-sphere, impulse + positional)
+      // Note: a grabbed prize (A.grabbed / B.grabbed) acts as a kinematic blocker (invMass = 0)
+      // that pushes any other ball out of the claw pocket so 2 balls can never occupy the claw.
       for (let i = 0; i < this.prizes.length; i++) {
         const A = this.prizes[i];
         const ba = A.body;
-        if (!ba || A.grabbed) continue;
+        if (!ba) continue;
         for (let j = i + 1; j < this.prizes.length; j++) {
           const B = this.prizes[j];
           const bb = B.body;
-          if (!bb || B.grabbed) continue;
-          if (ba.asleep && bb.asleep) continue;
+          if (!bb) continue;
+          if (A.grabbed && B.grabbed) continue;
+          if (!A.grabbed && !B.grabbed && ba.asleep && bb.asleep) continue;
           const dx = bb.pos.x - ba.pos.x, dy = bb.pos.y - ba.pos.y, dz = bb.pos.z - ba.pos.z;
           const rr = ba.broadR + bb.broadR;
           const d2 = dx * dx + dy * dy + dz * dz;
           if (d2 > rr * rr) continue;
+          const wA = A.grabbed ? 0 : ba.invMass;
+          const wB = B.grabbed ? 0 : bb.invMass;
+          const wsum = wA + wB;
+          if (wsum <= 0) continue;
           for (const sa of ba.spheres) {
             const ca = this._sphereWorldCenter(ba, sa, _tmpA);
             for (const sb of bb.spheres) {
@@ -1300,30 +1315,32 @@ export class ClawRig {
               const d2s = ddx * ddx + ddy * ddy + ddz * ddz;
               if (d2s >= rsum * rsum || d2s < 1e-8) continue;
               const d = Math.sqrt(d2s);
-              const nx = ddx / d, ny = ddy / d, nz = ddz / d;
+              let nx = ddx / d, ny = ddy / d, nz = ddz / d;
               const pen = rsum - d;
+              // If one ball is grabbed inside the claw, push the other ball outward & downward back to the pit
+              if (A.grabbed && ny > -0.25) ny = -0.35;
+              if (B.grabbed && ny < 0.25) ny = 0.35;
               // Wake sleeping bodies that get touched
-              if (ba.asleep) { ba.asleep = false; ba.sleepT = 0; }
-              if (bb.asleep) { bb.asleep = false; bb.sleepT = 0; }
+              if (!A.grabbed && ba.asleep) { ba.asleep = false; ba.sleepT = 0; }
+              if (!B.grabbed && bb.asleep) { bb.asleep = false; bb.sleepT = 0; }
               ba.contacted = bb.contacted = true;
-              const wsum = ba.invMass + bb.invMass;
-              ba.pos.x -= nx * pen * (ba.invMass / wsum);
-              ba.pos.y -= ny * pen * (ba.invMass / wsum);
-              ba.pos.z -= nz * pen * (ba.invMass / wsum);
-              bb.pos.x += nx * pen * (bb.invMass / wsum);
-              bb.pos.y += ny * pen * (bb.invMass / wsum);
-              bb.pos.z += nz * pen * (bb.invMass / wsum);
+              ba.pos.x -= nx * pen * (wA / wsum);
+              ba.pos.y -= ny * pen * (wA / wsum);
+              ba.pos.z -= nz * pen * (wA / wsum);
+              bb.pos.x += nx * pen * (wB / wsum);
+              bb.pos.y += ny * pen * (wB / wsum);
+              bb.pos.z += nz * pen * (wB / wsum);
               const rvx = bb.vel.x - ba.vel.x, rvy = bb.vel.y - ba.vel.y, rvz = bb.vel.z - ba.vel.z;
               const vn = rvx * nx + rvy * ny + rvz * nz;
               if (vn < 0) {
                 const e = Math.min(ba.restitution, bb.restitution);
                 const jimp = (-(1 + e) * vn) / wsum;
-                ba.vel.x -= jimp * ba.invMass * nx;
-                ba.vel.y -= jimp * ba.invMass * ny;
-                ba.vel.z -= jimp * ba.invMass * nz;
-                bb.vel.x += jimp * bb.invMass * nx;
-                bb.vel.y += jimp * bb.invMass * ny;
-                bb.vel.z += jimp * bb.invMass * nz;
+                ba.vel.x -= jimp * wA * nx;
+                ba.vel.y -= jimp * wA * ny;
+                ba.vel.z -= jimp * wA * nz;
+                bb.vel.x += jimp * wB * nx;
+                bb.vel.y += jimp * wB * ny;
+                bb.vel.z += jimp * wB * nz;
               }
             }
           }
@@ -1331,10 +1348,25 @@ export class ClawRig {
       }
 
       // Claw colliders <-> prizes (16-node BMX chain: bell + knuckles + finger sweep)
+      // Non-grabbed prizes get pushed aside/down by the claw but NEVER lifted upward into the air;
+      // lifting a prize is strictly controlled by _attachedPrize (max 1 ball ever).
       let impactReaction = null;
+      const cgpNow = this.clawGroup.position;
+      const liftingPhase = this.phase === 'grabbing' || this.phase === 'hoisting' || this.phase === 'transporting' || this.phase === 'releasing';
       for (const pr of this.prizes) {
         const b = pr.body;
         if (!b || pr.grabbed) continue;
+        // Safety guard: no unattached ball may ever ride up inside the claw cage during hoist/transport
+        if (!pr.droppingInChute && (this.phase === 'hoisting' || this.phase === 'transporting') && b.pos.y > FLOOR_Y + 0.34) {
+          const rx = b.pos.x - cgpNow.x, rz = b.pos.z - cgpNow.z;
+          const rHoriz = Math.hypot(rx, rz);
+          if (rHoriz < 0.42 && b.pos.y > cgpNow.y - 0.68 && b.pos.y < cgpNow.y + 0.15) {
+            const invR = rHoriz > 1e-4 ? 1 / rHoriz : 1;
+            b.pos.x += (rHoriz > 1e-4 ? rx * invR : 0.7) * 0.04;
+            b.pos.z += (rHoriz > 1e-4 ? rz * invR : 0.7) * 0.04;
+            b.vel.y = Math.min(b.vel.y, -0.65);
+          }
+        }
         for (const s2 of b.spheres) {
           const cs = this._sphereWorldCenter(b, s2, _tmpA);
           for (const col of cols) {
@@ -1343,7 +1375,8 @@ export class ClawRig {
             const d2c = ddx * ddx + ddy * ddy + ddz * ddz;
             if (d2c >= rsum * rsum || d2c < 1e-8) continue;
             const d = Math.sqrt(d2c);
-            const nx = ddx / d, ny = ddy / d, nz = ddz / d;
+            let nx = ddx / d, ny = ddy / d, nz = ddz / d;
+            if (liftingPhase && ny > 0) ny = 0;
             const pen = rsum - d;
             if (b.asleep) { b.asleep = false; b.sleepT = 0; }
             b.contacted = true;
@@ -1361,26 +1394,22 @@ export class ClawRig {
             if (vn < 0) {
               const j = -vn * (1 + b.restitution * 0.5);
               b.vel.x += j * nx * 0.55 + cvx * 0.10;
-              b.vel.y += j * ny * 0.55 + cvy * 0.10;
+              b.vel.y += Math.min(0, j * ny * 0.55 + cvy * 0.10);
               b.vel.z += j * nz * 0.55 + cvz * 0.10;
               // Two-way: the plush push slows/tilts the claw on hard downward hits
-              if (this.phase === 'descending' && clawApproachSpeed > 0.25 && ny > 0.35) {
+              if (this.phase === 'descending' && clawApproachSpeed > 0.25 && ddy / d > 0.35) {
                 impactReaction = { mag: Math.min(1, clawApproachSpeed * vn * -0.8), nx, nz };
               }
             }
-            // REAL Coulomb grip: tangential friction at finger contacts, capped
-            // by normal force. Closed fingers pinch (high μ); open fingers let
-            // prizes slide off like glass. A wedged prize holds via pen-based
-            // static friction; too heavy or badly seated -> it slips out.
+            // Tangential damping on pile contact (never lifts non-attached balls upward)
             const tvx = relVx - vn * nx, tvy = relVy - vn * ny, tvz = relVelZ - vn * nz;
             const tLen = Math.hypot(tvx, tvy, tvz);
-            if (tLen > 1e-4) {
-              const pinched = anim.currentOpen < 0.45;
-              const mu = pinched ? 0.12 + this.gripStrength * 0.9 : 0.15;
+            if (tLen > 1e-4 && !liftingPhase) {
+              const mu = 0.15;
               const maxFric = mu * Math.max(-vn * 0.5, pen * 4.0);
-              const scale = Math.min(1, maxFric / tLen) * 0.92;
+              const scale = Math.min(1, maxFric / tLen) * 0.85;
               b.vel.x -= tvx * scale;
-              b.vel.y -= tvy * scale;
+              if (tvy > 0) b.vel.y -= tvy * scale;
               b.vel.z -= tvz * scale;
             }
           }
@@ -1441,6 +1470,9 @@ export class ClawRig {
     if (this.phase === 'idle') {
       if (this._attachedPrize) this._releaseAttachedPrize(false);
       this._grabAttempted = false;
+      this._wonThisCycle = false;
+      this._postSlipTimer = 0;
+      this._grabAttempts += 1;
       this._snapshotPreDropAim();
       this.phase = 'descending';
       this.phaseTimer = 0;
@@ -1554,9 +1586,9 @@ export class ClawRig {
     }
   }
 
-  // Try to latch the best sphere underneath the closing 3-prong claw:
-  // - Well-centered grab (aimHoriz <= 0.19): holds securely inside the prongs all the way to the chute.
-  // - Off-center edge graze (0.19 < aimHoriz <= 0.36): lifts off the pile, wobbles, and slips out mid-way.
+  // Try to latch at most 1 exposed top-layer sphere underneath the closing 3-prong claw.
+  // Even well-aimed grabs can slip during hoisting or transport like a real arcade claw machine,
+  // while off-center grazes always slip out mid-way.
   _tryAttachPrize() {
     if (this._attachedPrize) return;
     const cg = this.clawGroup.position;
@@ -1568,40 +1600,99 @@ export class ClawRig {
     for (const pr of this.prizes) {
       const b = pr.body;
       if (!b || pr.droppingInChute) continue;
+      // Only exposed surface spheres can be grabbed (never reach through a top ball to grab a buried one)
+      let buried = false;
+      for (const other of this.prizes) {
+        if (other === pr || !other.body || other.droppingInChute) continue;
+        if (other.body.pos.y > b.pos.y + 0.065 &&
+            Math.hypot(other.body.pos.x - b.pos.x, other.body.pos.z - b.pos.z) < 0.21) {
+          buried = true;
+          break;
+        }
+      }
+      if (buried) continue;
       const dHoriz = Math.hypot(b.pos.x - cg.x, b.pos.z - cg.z);
       const preHoriz = this._preDropDist && this._preDropDist.has(pr)
         ? this._preDropDist.get(pr)
         : Math.hypot(b.pos.x - aimX, b.pos.z - aimZ);
       const dy = cg.y - b.pos.y;
-      if (dy < 0.10 || dy > 0.58 || dHoriz > 0.38 || preHoriz > 0.36) continue;
-      const score = preHoriz - (b.pos.y - FLOOR_Y) * 0.22;
+      if (dy < 0.08 || dy > 0.56 || dHoriz > 0.34 || preHoriz > 0.32) continue;
+      const score = preHoriz - (b.pos.y - FLOOR_Y) * 0.18;
       if (score < bestScore) {
         bestScore = score;
         best = pr;
         bestAimHoriz = preHoriz;
       }
     }
-    if (!best) return;
+    if (!best) {
+      this._slipsSinceWin += 1;
+      return;
+    }
     this._attachedPrize = best;
     best.grabbed = true;
+    best.slippedOut = false;
     best.body.asleep = false;
     best.body.sleepT = 0;
     best.body.vel.set(0, 0, 0);
     this._attachedElapsed = 0;
-    if (bestAimHoriz <= 0.19) {
+
+    // Push any neighboring spheres away from the claw mouth so a second sphere never wedges alongside best
+    for (const other of this.prizes) {
+      if (other === best || !other.body || other.droppingInChute) continue;
+      const ob = other.body;
+      const dx = ob.pos.x - cg.x, dz = ob.pos.z - cg.z;
+      const dh = Math.hypot(dx, dz);
+      if (dh < 0.38 && Math.abs(ob.pos.y - best.body.pos.y) < 0.28) {
+        const inv = dh > 1e-4 ? 1 / dh : 1;
+        ob.asleep = false;
+        ob.sleepT = 0;
+        ob.vel.x += (dh > 1e-4 ? dx * inv : 0.7) * 0.45;
+        ob.vel.z += (dh > 1e-4 ? dz * inv : 0.7) * 0.45;
+        ob.vel.y = Math.min(ob.vel.y, -0.4);
+      }
+    }
+
+    let willSlip = false;
+    if (this.forceGripOutcome === 'win') {
+      willSlip = false;
+    } else if (this.forceGripOutcome === 'slip') {
+      willSlip = true;
+    } else if (bestAimHoriz > 0.145) {
+      willSlip = true;
+    } else {
+      // Centered grab: realistic claw slip probability that eases after consecutive drops
+      const slipChance = this._slipsSinceWin === 0
+        ? 0.75
+        : this._slipsSinceWin === 1
+          ? 0.50
+          : this._slipsSinceWin === 2
+            ? 0.20
+            : 0.0;
+      willSlip = Math.random() < slipChance;
+    }
+
+    if (!willSlip) {
       this._attachedSlipTime = Infinity;
       this._attachedLocalOffset.set(
-        (best.body.pos.x - cg.x) * 0.18,
-        -0.265 * CLAW_SCALE,
-        (best.body.pos.z - cg.z) * 0.18
+        (best.body.pos.x - cg.x) * 0.14,
+        -0.245 * CLAW_SCALE,
+        (best.body.pos.z - cg.z) * 0.14
+      );
+    } else if (bestAimHoriz > 0.145) {
+      const edgeT = THREE.MathUtils.clamp((0.32 - bestAimHoriz) / 0.175, 0, 1);
+      this._attachedSlipTime = 0.55 + edgeT * 0.75;
+      this._attachedLocalOffset.set(
+        (best.body.pos.x - cg.x) * 0.48,
+        -0.31 * CLAW_SCALE,
+        (best.body.pos.z - cg.z) * 0.48
       );
     } else {
-      const edgeT = THREE.MathUtils.clamp((0.36 - bestAimHoriz) / 0.17, 0, 1);
-      this._attachedSlipTime = 0.65 + edgeT * 0.85;
+      // Centered grab that loses grip either near the top of the hoist or during horizontal transport
+      this._attachedSlipTime = 1.05 + Math.random() * 1.10;
       this._attachedLocalOffset.set(
-        (best.body.pos.x - cg.x) * 0.55,
-        -0.33 * CLAW_SCALE,
-        (best.body.pos.z - cg.z) * 0.55
+        (best.body.pos.x - cg.x) * 0.24,
+        -0.28 * CLAW_SCALE,
+        (best.body.pos.z - cg.z) * 0.24
       );
     }
   }
@@ -1616,10 +1707,19 @@ export class ClawRig {
     b.asleep = false;
     b.sleepT = 0;
     if (intoChute) {
+      pr.slippedOut = false;
       pr.droppingInChute = true;
       b.vel.set((CHUTE_BOX.holeX - b.pos.x) * 1.6, -0.9, 0.48);
     } else {
-      b.vel.set(this.anim.trolleyVelX * 0.45, -0.55, this.anim.trolleyVelZ * 0.45);
+      pr.slippedOut = true;
+      this._slipsSinceWin += 1;
+      this._postSlipTimer = 0.001;
+      this.targetOpen = Math.max(this.targetOpen, 0.38);
+      // If slipping near the chute box boundary, nudge back toward the main pit so a slip never lands in the chute
+      const nearChute = b.pos.x < CHUTE_BOX.xMax + 0.30 && b.pos.z > CHUTE_BOX.zMin - 0.30;
+      const vx = nearChute ? Math.max(0.38, this.anim.trolleyVelX * 0.4) : this.anim.trolleyVelX * 0.45;
+      const vz = nearChute ? Math.min(-0.22, this.anim.trolleyVelZ * 0.4) : this.anim.trolleyVelZ * 0.45;
+      b.vel.set(vx, -0.65, vz);
     }
   }
 
@@ -1629,7 +1729,12 @@ export class ClawRig {
     const b = pr.body;
     if (this.phase === 'hoisting' || this.phase === 'transporting') {
       this._attachedElapsed += dt;
-      if (this._attachedElapsed >= this._attachedSlipTime) {
+      // Never allow a doomed-to-slip ball to cross over the chute box before slipping
+      const approachingChute = this.phase === 'transporting' &&
+        this._attachedSlipTime < Infinity &&
+        b.pos.x < CHUTE_BOX.xMax + 0.26 &&
+        b.pos.z > CHUTE_BOX.zMin - 0.26;
+      if (this._attachedElapsed >= this._attachedSlipTime || approachingChute) {
         this._releaseAttachedPrize(false);
         return;
       }
@@ -1641,7 +1746,7 @@ export class ClawRig {
     _tmpA.copy(this._attachedLocalOffset);
     if (this._attachedSlipTime < Infinity) {
       const k = Math.min(1, this._attachedElapsed / this._attachedSlipTime);
-      _tmpA.y -= k * k * 0.11;
+      _tmpA.y -= k * k * 0.12;
       _tmpA.x += Math.sin(this.t * 18) * 0.018 * k;
     }
     _tmpA.applyEuler(_euler).add(this.clawGroup.position);
@@ -1653,17 +1758,7 @@ export class ClawRig {
   }
 
   _detectCarried() {
-    if (this._attachedPrize) return this._attachedPrize;
-    const cgp = this.clawGroup.position;
-    for (const pr of this.prizes) {
-      const b = pr.body;
-      if (!b || pr.droppingInChute) continue;
-      const dx = b.pos.x - cgp.x, dz = b.pos.z - cgp.z;
-      if (dx * dx + dz * dz < 0.1156 && b.pos.y > cgp.y - 0.62 && b.pos.y < cgp.y + 0.18 && b.pos.y > FLOOR_Y + 0.3) {
-        return pr;
-      }
-    }
-    return null;
+    return this._attachedPrize || null;
   }
 
   // Full studio grab-cycle state machine + floor-bounce physics step
@@ -1736,7 +1831,20 @@ export class ClawRig {
           }
         }
       } else if (this.phase === 'hoisting') {
-        if (Math.abs(anim.currentDrop - DROP_REST) < 0.14 && this.phaseTimer > 1.55) {
+        if (this._postSlipTimer > 0) {
+          this._postSlipTimer += dt;
+        }
+        // If empty-handed (missed or already slipped during hoist), park back to idle once retracted
+        if (!this._attachedPrize && Math.abs(anim.currentDrop - DROP_REST) < 0.18 && (this._postSlipTimer > 0.65 || this.phaseTimer > 1.35)) {
+          this.autoDemo = false;
+          this.phase = 'idle';
+          this.phaseTimer = 0;
+          this._postSlipTimer = 0;
+          this.targetTX = anim.smoothTX;
+          this.targetTZ = anim.smoothTZ;
+          this.targetDrop = DROP_REST;
+          this.targetOpen = 0.82;
+        } else if (Math.abs(anim.currentDrop - DROP_REST) < 0.14 && this.phaseTimer > 1.55) {
           this.phase = 'transporting';
           this.phaseTimer = 0;
           this._transStartX = anim.smoothTX;
@@ -1745,15 +1853,29 @@ export class ClawRig {
           this._transDuration = Math.max(1.5, totalDist / 0.72);
         }
       } else if (this.phase === 'transporting') {
-        const u = Math.min(1, this.phaseTimer / this._transDuration);
-        const ease = 0.5 - 0.5 * Math.cos(Math.PI * u);
-        this.targetTX = THREE.MathUtils.lerp(this._transStartX, CHUTE.x, ease);
-        this.targetTZ = THREE.MathUtils.lerp(this._transStartZ, CHUTE.z, ease);
-        const dist = Math.hypot(anim.smoothTX - CHUTE.x, anim.smoothTZ - CHUTE.z);
-        if (u >= 1 && dist < 0.06 && this.phaseTimer > this._transDuration + 0.28) {
-          this.phase = 'releasing';
-          this.phaseTimer = 0;
-          this.targetOpen = 0.9;
+        if (this._postSlipTimer > 0) {
+          this._postSlipTimer += dt;
+          if (this._postSlipTimer > 0.75) {
+            this.autoDemo = false;
+            this.phase = 'idle';
+            this.phaseTimer = 0;
+            this._postSlipTimer = 0;
+            this.targetTX = anim.smoothTX;
+            this.targetTZ = anim.smoothTZ;
+            this.targetDrop = DROP_REST;
+            this.targetOpen = 0.82;
+          }
+        } else {
+          const u = Math.min(1, this.phaseTimer / this._transDuration);
+          const ease = 0.5 - 0.5 * Math.cos(Math.PI * u);
+          this.targetTX = THREE.MathUtils.lerp(this._transStartX, CHUTE.x, ease);
+          this.targetTZ = THREE.MathUtils.lerp(this._transStartZ, CHUTE.z, ease);
+          const dist = Math.hypot(anim.smoothTX - CHUTE.x, anim.smoothTZ - CHUTE.z);
+          if (u >= 1 && dist < 0.06 && this.phaseTimer > this._transDuration + 0.28) {
+            this.phase = 'releasing';
+            this.phaseTimer = 0;
+            this.targetOpen = 0.9;
+          }
         }
       } else if (this.phase === 'releasing') {
         if (this._attachedPrize && anim.currentOpen > 0.32) {
