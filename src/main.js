@@ -1057,7 +1057,6 @@ const verseUI = {
   sheetTitle: document.getElementById('chapter-title'),
   sheetBody: document.getElementById('chapter-body'),
   sheetBack: document.getElementById('chapter-back'),
-  sheetTrans: document.getElementById('chapter-sub'),
 };
 let versePool = null;          // [{ i, r, t }] ranked-by-substance pool
 let revealState = null;        // active ball→paper sequence
@@ -1380,6 +1379,8 @@ async function shareCurrentVerse() {
 
 function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
+let suppressChapterScroll = false;
+
 async function openChapter(v) {
   if (!v) return;
   const bibleLang = FULL_BIBLE_LANGS.has(lang) ? lang : 'en';
@@ -1388,7 +1389,6 @@ async function openChapter(v) {
     if (!txt) return;
     bibleLines = txt.split('\n');
     bibleLinesLang = bibleLang;
-    verseUI.sheetTrans.textContent = I18N[bibleLang].trans;
   }
   const ref = bibleLines[v.i].split('\t')[0];            // "Jeremiah 29:11"
   const chapKey = ref.slice(0, ref.lastIndexOf(':'));    // "Jeremiah 29"
@@ -1400,22 +1400,40 @@ async function openChapter(v) {
     const [r, t] = ln.split('\t');
     const vn = r.slice(r.lastIndexOf(':') + 1);
     const gi = a + k;
-    // attention window: the won verse + the next 3 arrive unveiled; the rest waits in the blur
-    const cls = gi === v.i ? ' won' : (gi > v.i + 3 || gi < v.i ? ' veiled' : '');
+    const cls = gi === v.i ? ' won' : ' veiled';
     return `<div class="ch-verse${cls}"><span class="vn">${vn}</span>${esc(t || '')}</div>`;
   }).join('');
+  suppressChapterScroll = true;
   verseUI.sheet.classList.add('on');
   verseUI.sheetBody.scrollTop = 0;
   requestAnimationFrame(() => {
     const body = verseUI.sheetBody;
+    const bodyRect = body.getBoundingClientRect();
+    const versesEls = [...body.querySelectorAll('.ch-verse')];
     const won = body.querySelector('.won');
-    if (won) {
-      body.scrollTop = Math.max(0,
-        won.getBoundingClientRect().top - body.getBoundingClientRect().top
-        + body.scrollTop - body.clientHeight * 0.3);
+    const lastEl = versesEls[versesEls.length - 1];
+    if (won && lastEl) {
+      const wonTop = won.getBoundingClientRect().top - bodyRect.top + body.scrollTop;
+      const lastBottom = lastEl.getBoundingClientRect().bottom - bodyRect.top + body.scrollTop;
+      const desired = Math.max(0, wonTop - body.clientHeight * 0.14);
+      // Clamp initial scroll so the last verses always extend all the way down behind the back button
+      const maxInitial = Math.max(0, lastBottom - body.clientHeight * 0.96);
+      body.scrollTop = Math.min(desired, maxInitial);
     }
-    // Edge: a short chapter that fits entirely on screen unveils itself — no scroll exists
-    if (body.scrollHeight <= body.clientHeight + 8) unveilVisible();
+    requestAnimationFrame(() => {
+      const top0 = body.getBoundingClientRect().top;
+      const clearEdge = top0 + body.clientHeight * 0.56;
+      versesEls.forEach((el, idx) => {
+        const r = el.getBoundingClientRect();
+        // Keep the last visible verses in the lower zone veiled on initial open so the
+        // dark + blur scroll cue is always present right from the start
+        const isLastTwo = idx >= versesEls.length - 2 && versesEls.length > 3;
+        if (r.bottom > top0 + 6 && r.top < clearEdge && (!isLastTwo || el.classList.contains('won'))) {
+          el.classList.remove('veiled');
+        }
+      });
+      setTimeout(() => { suppressChapterScroll = false; }, 120);
+    });
   });
 }
 
@@ -1423,7 +1441,8 @@ async function openChapter(v) {
 function unveilVisible() {
   const body = verseUI.sheetBody;
   const bodyTop = body.getBoundingClientRect().top;
-  const edge = bodyTop + body.clientHeight * 0.74;
+  const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 28;
+  const edge = bodyTop + body.clientHeight * (atBottom ? 0.92 : 0.62);
   body.querySelectorAll('.ch-verse.veiled').forEach((el) => {
     const r = el.getBoundingClientRect();
     if (r.top < edge && r.bottom > bodyTop) el.classList.remove('veiled');
@@ -1431,7 +1450,7 @@ function unveilVisible() {
 }
 let unveilTick = false;
 verseUI.sheetBody.addEventListener('scroll', () => {
-  if (unveilTick) return;
+  if (suppressChapterScroll || unveilTick) return;
   unveilTick = true;
   requestAnimationFrame(() => { unveilTick = false; unveilVisible(); });
 }, { passive: true });

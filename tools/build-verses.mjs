@@ -47,6 +47,127 @@ const TRANSLATIONS = {
   en: 'bsb', es: 'vbl', pt: 'blivre', de: 'luther1912', it: 'riveduta1927',
 };
 
+// Fix upstream eBible VBL glued-word defects (where stripped USFM tags welded adjacent words)
+const ES_GLUED_FIXES = [
+  ['aataquen', 'ataquen'],
+  ['acuerdode', 'acuerdo de'],
+  ['alegresde', 'alegres de'],
+  ['asnoa', 'asno a'],
+  ['atravesarlahasta', 'atravesarla hasta'],
+  ['aunqueen', 'aunque en'],
+  ['bañode', 'baño de'],
+  ['buscaragua', 'buscar agua'],
+  ['campamentoen', 'campamento en'],
+  ['comersea', 'comerse a'],
+  ['consagradoal', 'consagrado al'],
+  ['corranpara', 'corran para'],
+  ['creciócontinuamente', 'creció continuamente'],
+  ['cuandoel', 'cuando el'],
+  ['cuandovieron', 'cuando vieron'],
+  ['cubiertade', 'cubierta de'],
+  ['cuidades', 'ciudades'],
+  ['cultoa', 'culto a'],
+  ['darmelos', 'dármelos'],
+  ['decidirpor', 'decidir por'],
+  ['depronto', 'de pronto'],
+  ['detodo', 'de todo'],
+  ['dondequiera', 'donde quiera'],
+  ['efrónel', 'efrón el'],
+  ['ehijo', 'e hijo'],
+  ['encuentroen', 'encuentro en'],
+  ['enel', 'en el'],
+  ['enesa', 'en esa'],
+  ['enjambrede', 'enjambre de'],
+  ['entoncesatacaré', 'entonces atacaré'],
+  ['entoncesla', 'entonces la'],
+  ['entonceslos', 'entonces los'],
+  ['esaúle', 'esaú le'],
+  ['esesto', 'es esto'],
+  ['estabala', 'estaba la'],
+  ['estepueblo', 'este pueblo'],
+  ['estáel', 'está el'],
+  ['fabricóuna', 'fabricó una'],
+  ['faraóna', 'faraón a'],
+  ['fuea', 'fue a'],
+  ['fueronlos', 'fueron los'],
+  ['habráfuertes', 'habrá fuertes'],
+  ['hanactuado', 'han actuado'],
+  ['hancausado', 'han causado'],
+  ['haránlas', 'harán las'],
+  ['haráscuernos', 'harás cuernos'],
+  ['hastala', 'hasta la'],
+  ['hechome', 'hecho me'],
+  ['hoyustedes', 'hoy ustedes'],
+  ['jeftéel', 'jefté el'],
+  ['lacantidad', 'la cantidad'],
+  ['laespada', 'la espada'],
+  ['latierra', 'la tierra'],
+  ['lesdio', 'les dio'],
+  ['leshabía', 'les había'],
+  ['llevalas', 'lleva las'],
+  ['loscapataces', 'los capataces'],
+  ['losídolos', 'los ídolos'],
+  ['muevensobre', 'mueven sobre'],
+  ['nia', 'ni a'],
+  ['nicomparecer', 'ni comparecer'],
+  ['nitú', 'ni tú'],
+  ['noaprueba', 'no aprueba'],
+  ['noenciendan', 'no enciendan'],
+  ['nohagan', 'no hagan'],
+  ['noharán', 'no harán'],
+  ['nopreparen', 'no preparen'],
+  ['nuncatengan', 'nunca tengan'],
+  ['ofrendamecida', 'ofrenda mecida'],
+  ['oscurapor', 'oscura por'],
+  ['pactoentre', 'pacto entre'],
+  ['parati', 'para ti'],
+  ['pecaso', 'pecado'],
+  ['porel', 'por el'],
+  ['porencima', 'por encima'],
+  ['porqueen', 'porque en'],
+  ['rescatepor', 'rescate por'],
+  ['seanhallados', 'sean hallados'],
+  ['sila', 'si la'],
+  ['soyplenamente', 'soy plenamente'],
+  ['subana', 'suban a'],
+  ['tambiénelaboraron', 'también elaboraron'],
+  ['tambiény', 'también y'],
+  ['templohan', 'templo han'],
+  ['tierray', 'tierra y'],
+  ['todoel', 'todo el'],
+  ['traertelos', 'traerte los'],
+  ['trataránde', 'tratarán de'],
+  ['tunombre', 'tu nombre'],
+  ['túsoplaste', 'tú soplaste'],
+  ['vendena', 'venden a'],
+  ['vestidosy', 'vestidos y'],
+  ['yera', 'y era'],
+  ['yleche', 'y leche'],
+  ['yluego', 'y luego'],
+].map(([bad, good]) => ({
+  re: new RegExp(`(?<!\\p{L})${bad}(?!\\p{L})`, 'giu'),
+  good,
+}));
+
+function cleanLangVerse(lang, s) {
+  if (!s) return '';
+  let out = s.trim();
+  if (lang === 'es') {
+    for (const { re, good } of ES_GLUED_FIXES) {
+      out = out.replace(re, (m) => {
+        const first = m[0];
+        if (first === first.toUpperCase() && first !== first.toLowerCase()) {
+          return good[0].toUpperCase() + good.slice(1);
+        }
+        return good;
+      });
+    }
+    out = out.replace(/\bvendé a ustedes\b/g, 'vendré a ustedes');
+    out = out.replace(/\bCuando oseches\b/g, 'Cuando coseches');
+  }
+  return out;
+}
+
 // --- Versification (chapter counts per book id, parsed from the TS source) ---
 const versSrc = readFileSync(join(XREF, 'src/core/bible/kjv-versification.ts'), 'utf8');
 const countsById = {};
@@ -98,11 +219,12 @@ for (const [lang, tId] of Object.entries(TRANSLATIONS)) {
   const names = LANG_BOOKS[lang];
   const refOf = (i) => `${names[meta[i].bi]} ${meta[i].c}:${meta[i].v}`;
 
+  const cleanedVerses = data.verses.map((t) => cleanLangVerse(lang, t));
   const pool = [];
   for (const i of ranked) {
-    const t = data.verses[i];
-    if (!t || t.trim().length < 25) continue;
-    pool.push({ i, r: refOf(i), t: t.trim() });
+    const t = cleanedVerses[i];
+    if (!t || t.length < 25) continue;
+    pool.push({ i, r: refOf(i), t });
     if (pool.length >= POOL_SIZE) break;
   }
   rmSync(join(OUT, `verses-${lang}.json`), { force: true });
@@ -112,7 +234,7 @@ for (const [lang, tId] of Object.entries(TRANSLATIONS)) {
 
   if (FULL_BIBLE_LANGS.has(lang)) {
     rmSync(join(OUT, `bible-${lang}.txt`), { force: true });
-    const txt = data.verses.map((t, i) => `${refOf(i)}\t${(t || '').trim()}`).join('\n');
+    const txt = cleanedVerses.map((t, i) => `${refOf(i)}\t${t}`).join('\n');
     const bBytes = writePackedBin(join(OUT, `bible-${lang}.bin`), txt);
     console.log(`bible-${lang}.bin ${(bBytes / 1024).toFixed(0)} KB`);
   }
